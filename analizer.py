@@ -49,7 +49,7 @@ def mostrar_grafico_visual(resultados, carpeta):
     El video más largo en rojo, el más corto en verde."""
     lista_de_errores.append(carpeta)
     if not resultados:
-        messagebox.showinfo("Sin datos", "No hay vídeos válidos para graficar.")
+        messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
     nombres = [nombre for nombre, _, _ in resultados]
     duraciones = [dur for _, dur, _ in resultados]
@@ -104,7 +104,7 @@ def calcular_duracion_media(resultados):
 def mostrar_grafico(resultados, carpeta):
     """ Muestra un gráfico de dispersión de duración vs tamaño de los vídeos """
     if not resultados:
-        messagebox.showinfo("Sin datos", "No hay vídeos válidos para graficar.")
+        messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
     duraciones = [dur for _, dur, _ in resultados]
     pesos = [peso for _, _, peso in resultados]
@@ -360,7 +360,7 @@ class AnalizadorVideosApp:
             if os.path.exists(review_dir):
                 os.startfile(review_dir)
             else:
-                messagebox.showinfo("Info", "La carpeta 'review' no existe aún.")
+                messagebox.askokcancel("Info", "La carpeta 'review' no existe aún.")
 
     def abrir_xcut(self):
         """ Abre la carpeta 'xcut' dentro de la carpeta seleccionada """
@@ -369,7 +369,7 @@ class AnalizadorVideosApp:
             if os.path.exists(xcut_dir):
                 os.startfile(xcut_dir)
             else:
-                messagebox.showinfo("Info", "La carpeta 'xcut' no existe aún.")
+                messagebox.askokcancel("Info", "La carpeta 'xcut' no existe aún.")
 
     def abrir_errores(self):
         """ Abre la carpeta 'errores' dentro de la carpeta seleccionada """
@@ -378,13 +378,13 @@ class AnalizadorVideosApp:
             if os.path.exists(errores_dir):
                 os.startfile(errores_dir)
             else:
-                messagebox.showinfo("Info", "La carpeta 'errores' no existe aún.")
+                messagebox.askokcancel("Info", "La carpeta 'errores' no existe aún.")
 
     def ver_carpetas_vacias(self):
         """Muestra en el cuadro Text las carpetas y subcarpetas vacías 
         dentro de la carpeta seleccionada"""
         if not self.carpeta:
-            messagebox.showwarning("Advertencia", "Primero selecciona una carpeta.")
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
             return
         vacias = []
         for rooti, dirs, files in os.walk(self.carpeta):
@@ -423,7 +423,7 @@ class AnalizadorVideosApp:
             threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
                              daemon=True).start()
         else:
-            messagebox.showwarning("Advertencia", "Primero selecciona una carpeta.")
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
 
     def seleccionar_carpeta(self):
         """ Abre un diálogo para seleccionar una carpeta """
@@ -477,7 +477,7 @@ class AnalizadorVideosApp:
         dentro de la carpeta seleccionada."""
         #print("errores: ", len(lista_de_errores))
         if not self.carpeta:
-            messagebox.showwarning("Advertencia", "Primero selecciona una carpeta.")
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
             return
         archivos_avi = [f for f in os.listdir(self.carpeta) if f.lower().endswith('.avi')]
         nombre_carpeta1 = os.path.basename(self.carpeta).split('/')[-1]
@@ -500,7 +500,7 @@ class AnalizadorVideosApp:
     def mostrar_histograma_duraciones(self):
         """Muestra un histograma de la distribución de duraciones de los vídeos analizados."""
         if not self.resultados:
-            messagebox.showinfo("Sin datos", "No hay vídeos válidos para graficar.")
+            messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
         duraciones = [dur for _, dur, _ in self.resultados]
         plt.style.use('ggplot')
@@ -552,7 +552,7 @@ class AnalizadorVideosApp:
                 peso_max = float(entry_peso_max.get()) if entry_peso_max.get() else None
                 formato = entry_formato.get().strip().lower()
             except ValueError:
-                messagebox.showerror("Error", "Introduce valores numéricos válidos.")
+                messagebox.askokcancel("Error", "Introduce valores numéricos válidos.")
                 return
 
             encontrados = []
