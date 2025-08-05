@@ -1,5 +1,6 @@
 """ PERSONAJES """
 
+import csv
 import tkinter as tk
 from tkinter import messagebox
 from random import randint
@@ -13,13 +14,32 @@ import myth5_creator
 
 
 now = datetime.now()
-M1_VER = (1, 1)
+M1_VER = (1, 2)
 M1 = M1_VER[0]
 M2 = myth2_tools.M2_VER[0]
 M3 = myth3_attaks.M3_VER[0]
 M4 = myth4_acceso.M4_VER[0]
 M5 = myth5_creator.M5_VER[0]
 VERSION_LIST = f' {M1} . {M2} . {M3} . {M4} . {M5}'
+
+ELEMENTOS = {}
+ELEMENTSYMBOL = {}
+ELEMENTPHASE = {}
+ELEMENTRADIOACTIVE = {}
+
+with open(r'D:\documentos Edu\my_python_projects\project_gamma\tabla_periodica2.csv',
+          encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        numero = int(row['AtomicNumber'])
+        nombre = row['Element']
+        simbolo = row['Symbol']
+        phase = row['Phase']
+        radioactive = row['Radioactive']
+        ELEMENTOS[numero] = nombre
+        ELEMENTSYMBOL[numero] = simbolo
+        ELEMENTPHASE[numero] = phase
+        ELEMENTRADIOACTIVE[numero] = radioactive
 
 def esp():
     """ dejar espacio """
@@ -177,6 +197,7 @@ class Personaje():
         self._padre = padrez
         self._madre = madrez
         self.imagen = imagen
+        self.elemento = randint(1, 118)  # Asigna elemento aleatorio
         # CREA EL ID ÚNICO SOLO UNA VEZ
         if creacion_id is not None:
             self.creacion_id = creacion_id
@@ -204,15 +225,17 @@ class Personaje():
         print(f'defensa magica {defensa_magica}')
         print(f'velocidad fisica {velocidad_fisica}')
         print(f'velocidad_magica {velocidad_magica}')
+        print(f'elemento: {self.elemento} - {ELEMENTOS[self.elemento]}')
+        print(f'phase: {ELEMENTPHASE[self.elemento]}')
+        print(f'Radioactivo: {ELEMENTRADIOACTIVE[self.elemento] == "yes"}')
 
-        # ...resto igual...
 
     def _calcular_fuerza_fisica(self):
         """ calcular fuerza fisica """
-        f = self.symbol.factor_fisico
+        factor_fisico = self.symbol.factor_fisico
         atk = self.symbol.factor_ataque
-        return round((((randint((20+f), 30) - int(self.gen)) * 2) +
-                      int(f) + int(atk) + round(int(self._life)/100, 2)), 2)
+        return round((((randint((20+factor_fisico), 30) - int(self.gen)) * 2) +
+                      int(factor_fisico) + int(atk) + round(int(self._life)/100, 2)), 2)
 
     def _calcular_fuerza_magica(self):
         """ calcular fuerza magica """
@@ -223,11 +246,11 @@ class Personaje():
                       int(x) + int(atk)), 2)
 
     def _calcular_defensa_fisica(self, fuerza_fisica):
-        f = self.symbol.factor_fisico
+        factor_fisico = self.symbol.factor_fisico
         defn = self.symbol.factor_defensa
         return round(((randint(4, 15) - 2*(int(self.gen)) +
-                       round(((fuerza_fisica+f) / 2), 2)) +
-                      int(f) + int(defn) + round(int(self._life)/100, 2)), 2)
+                       round(((fuerza_fisica+factor_fisico) / 2), 2)) +
+                      int(factor_fisico) + int(defn) + round(int(self._life)/100, 2)), 2)
 
     def _calcular_defensa_magica(self, fuerza_magica):
         x = self.symbol.factor_x
@@ -235,11 +258,11 @@ class Personaje():
         return round(((randint(6, 12) + (fuerza_magica / 2) + int(x)) + int(defn)), 2)
 
     def _calcular_velocidad_fisica(self, fuerza_fisica):
-        f = self.symbol.factor_fisico
+        factor_fisico = self.symbol.factor_fisico
         vel = self.symbol.factor_velocidad
-        return round((((randint((10+vel+f),
-                                60) + ((int(fuerza_fisica)+int(f)+int(vel)) / 2)) / 10) +
-                      int(f) + int(vel)), 2)
+        return round((((randint((10+vel+factor_fisico), 60) +
+                        ((int(fuerza_fisica)+int(factor_fisico)+int(vel)) / 2)) / 10) +
+                      int(factor_fisico) + int(vel)), 2)
 
     def _calcular_velocidad_magica(self, fuerza_magica):
         x = self.symbol.factor_x
@@ -251,6 +274,11 @@ class Personaje():
 
     def mostrar_info(self):
         """Muestra la ventana de información del personaje."""
+        # Solo cambia el elemento si NO es nivel 2
+        with open('project_2_myth/nivel.txt', 'r', encoding='utf-8') as nivel_r:
+            nivel_v = nivel_r.read().strip()
+        if nivel_v != '2':
+            self.elemento = randint(1, 118)
         self._imprimir_info()
         self._crear_ventana_info()
 
@@ -262,7 +290,7 @@ class Personaje():
     def _crear_ventana_info(self):
         info_personaje_panel = tk.Toplevel()
         info_personaje_panel.title(f'{self.nombre}')
-        info_personaje_panel.geometry('800x520+1200+200')
+        info_personaje_panel.geometry('800x600+1200+200')
 
         self._crear_labels_info(info_personaje_panel)
         self._crear_botones_info(info_personaje_panel)
@@ -272,14 +300,22 @@ class Personaje():
     def _crear_labels_info(self, panel):
         tk.Label(panel, text=f'{self.titulo} \n').pack()
         tk.Label(panel, font=('arial', 18), fg='blue',
-                 text=f':::    {self.nombre}   :::  \n ').pack()
+                text=f':::    {self.nombre}   :::  \n ').pack()
+        # Mostrar símbolo
+        tk.Label(panel, text=f'Símbolo: {self.symbol.symbol_name}', font=('Arial', 12, 'bold'),
+                fg='darkgreen').pack()
+        # Mostrar elemento y su nombre
+        nombre_elemento = ELEMENTOS.get(self.elemento, "Desconocido")
+        tk.Label(panel, text=f'Elemento: - {nombre_elemento} -',
+                 font=('Arial', 12, 'bold'),
+                fg='purple').pack()
         if self._padre is not None:
             tk.Label(panel, text=f'\n padre: {self._padre}\n madre: {self._madre} \n \n').pack()
         info_historia_labelframe = tk.LabelFrame(panel, text='Historia:', padx=5, pady=5,
-                                                 fg='gray50', borderwidth=0)
+                                                fg='gray50', borderwidth=0)
         info_historia_labelframe.pack()
         info_historia_text = tk.Text(info_historia_labelframe, wrap='word', font=('Arial', 12),
-                                     width=70, height=8, bg='gray95', borderwidth=0)
+                                    width=70, height=8, bg='gray95', borderwidth=0)
         info_historia_text.insert(tk.END, f' \n{self.hyst_description} \n \n')
         info_historia_text.config(state=tk.DISABLED)
         info_historia_text.pack(fill='both', expand=True)
@@ -305,31 +341,49 @@ class Personaje():
                 os.makedirs(carpeta)
             nombre_archivo = f"personaje_{self.creacion_id}.txt"
             ruta_archivo = os.path.join(carpeta, nombre_archivo)
-            with open(ruta_archivo, 'w', encoding='utf-8') as f:
-                f.write(f'\n{self.creacion_id}\n ')
-                f.write(f'{fuerza_fisica}\n ')
-                f.write(f'{fuerza_magica}\n ')
-                f.write(f'{defensa_fisica}\n ')
-                f.write(f'{defensa_magica}\n ')
-                f.write(f'{velocidad_fisica}\n ')
-                f.write(f'{velocidad_magica}\n')
-                f.write(f'{self.symbol.symbol_name}\n')
-                f.write(f'Título: {self.titulo}\n')
-                f.write(f'Sexo: {self._sexo}\n')
-                f.write(f'Nombre: {self.nombre}\n')
-                f.write(f'Símbolo: {self.symbol.symbol_name}\n')
-                f.write(f'Vida: {self._life}\n')
-                f.write(f'Ubicación: {self.location}\n')
-                f.write(f'Historia: {self.hyst_description}\n')
-                f.write(f'Padre: {self._padre}\n')
-                f.write(f'Madre: {self._madre}\n')
-                f.write('\n--- STATS ---\n')
-                f.write(f'Fuerza física: {fuerza_fisica}\n')
-                f.write(f'Fuerza mágica: {fuerza_magica}\n')
-                f.write(f'Defensa física: {defensa_fisica}\n')
-                f.write(f'Defensa mágica: {defensa_magica}\n')
-                f.write(f'Velocidad física: {velocidad_fisica}\n')
-                f.write(f'Velocidad mágica: {velocidad_magica}\n')
+            element_name = ELEMENTOS[self.elemento]
+            element_phase = ELEMENTPHASE[self.elemento]
+            is_radioactive = ELEMENTRADIOACTIVE[self.elemento] == 'yes'
+            with open(ruta_archivo, 'w', encoding='utf-8') as fk:
+                fk.write(f'\n{self.creacion_id}\n ')
+                fk.write(f'{fuerza_fisica}\n ')
+                fk.write(f'{fuerza_magica}\n ')
+                fk.write(f'{defensa_fisica}\n ')
+                fk.write(f'{defensa_magica}\n ')
+                fk.write(f'{velocidad_fisica}\n ')
+                fk.write(f'{velocidad_magica}\n')
+                fk.write(f'{self.symbol.symbol_name}\n')
+                fk.write(f'{self.elemento}\n')
+                fk.write(f'{element_name}\n')
+                fk.write(f'{element_phase}\n')
+                fk.write(f'Radioactivo: {"Sí" if is_radioactive else "No"}\n')
+                fk.write(f'Título: {self.titulo}\n')
+                fk.write(f'Sexo: {self._sexo}\n')
+                fk.write(f'Nombre: {self.nombre}\n')
+                fk.write(f'Símbolo: {self.symbol.symbol_name}\n')
+                fk.write(f'Vida: {self._life}\n')
+                fk.write(f'Ubicación: {self.location}\n')
+                fk.write(f'Historia: {self.hyst_description}\n')
+                fk.write(f'Padre: {self._padre}\n')
+                fk.write(f'Madre: {self._madre}\n')
+                fk.write('\n--- STATS ---\n')
+                fk.write(f'Fuerza física: {fuerza_fisica}\n')
+                fk.write(f'Fuerza mágica: {fuerza_magica}\n')
+                fk.write(f'Defensa física: {defensa_fisica}\n')
+                fk.write(f'Defensa mágica: {defensa_magica}\n')
+                fk.write(f'Velocidad física: {velocidad_fisica}\n')
+                fk.write(f'Velocidad mágica: {velocidad_magica}\n')
+                # Añade daños a los distintos tipos
+                fk.write('\n--- DAMAGES ---\n')
+                tipos = [
+                    'luz', 'oscuridad', 'sabiduria', 'guerra', 'caos', 'tierra', 'agua', 'fuego',
+                    'muerte', 'vida', 'paz', 'traicion', 'venganza', 'orden', 'ignorancia',
+                    'energia', 'proteccion', 'transformacion'
+                ]
+                for idx, tipo in enumerate(tipos):
+                    valor = int(self.symbol.symbol_tuple[idx])
+                    if valor > 0:
+                        fk.write(f'Daño a tipo {tipo}: {valor}\n')
             print(f'Personaje guardado en: {ruta_archivo}')
 
             # Guardar también como personaje seleccionado
@@ -339,17 +393,122 @@ class Personaje():
             panel.destroy()
             self.asignar_stats()
 
+            # Guardar también en el CSV
+            csv_path = (r'D:\documentos Edu\my_python_projects\project_2_myth'
+                        r'\personajes\personajes.csv')
+
+            datos_csv = [
+                self.titulo,
+                self.nombre,
+                self._life,
+                fuerza_fisica,
+                fuerza_magica,
+                defensa_fisica,
+                defensa_magica,
+                velocidad_fisica,
+                velocidad_magica,
+                self.symbol.symbol_name,
+                self.symbol.symbol_tuple,
+                self.elemento,
+                element_name,
+                element_phase,
+                "Sí" if is_radioactive else "No",
+                self._sexo
+            ]
+            # Escribe la línea en el CSV
+            existe = os.path.isfile(csv_path)
+            with open(csv_path, 'a', encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if not existe:
+                    writer.writerow([
+                        "Titulo", "Nombre", "Vida", "Fuerza_fisica", "Fuerza_special",
+                        "Defensa_fisica", "Defensa_special", "Velocidad_fisica",
+                        "Velocidad_special", "Habilidad", "tupla_symbol", "N_Elem",
+                        "Elemento", "Phase", "Radioactivo", "Sexo"
+                    ])
+                writer.writerow(datos_csv)
+
+        def editar_personaje():
+            edit_win = tk.Toplevel()
+            edit_win.title(f"Editar personaje: {self.nombre}")
+            edit_win.geometry("600x400+1300+300")
+
+            # Campos editables
+            tk.Label(edit_win, text="Nombre:").grid(row=0, column=0, sticky='e')
+            entry_nombre = tk.Entry(edit_win, width=30)
+            entry_nombre.insert(0, self.nombre)
+            entry_nombre.grid(row=0, column=1)
+
+            tk.Label(edit_win, text="Título:").grid(row=1, column=0, sticky='e')
+            entry_titulo = tk.Entry(edit_win, width=30)
+            entry_titulo.insert(0, self.titulo)
+            entry_titulo.grid(row=1, column=1)
+
+            tk.Label(edit_win, text="Vida:").grid(row=2, column=0, sticky='e')
+            entry_vida = tk.Entry(edit_win, width=30)
+            entry_vida.insert(0, self._life)
+            entry_vida.grid(row=2, column=1)
+
+            tk.Label(edit_win, text="Ubicación:").grid(row=3, column=0, sticky='e')
+            entry_ubicacion = tk.Entry(edit_win, width=30)
+            entry_ubicacion.insert(0, self.location)
+            entry_ubicacion.grid(row=3, column=1)
+
+            tk.Label(edit_win, text="Elemento (1-118):").grid(row=4, column=0, sticky='e')
+            entry_elemento = tk.Entry(edit_win, width=30)
+            entry_elemento.insert(0, str(self.elemento))
+            entry_elemento.grid(row=4, column=1)
+
+            tk.Label(edit_win, text="Historia:").grid(row=5, column=0, sticky='ne')
+            text_historia = tk.Text(edit_win, width=40, height=6)
+            text_historia.insert(tk.END, self.hyst_description)
+            text_historia.grid(row=5, column=1)
+
+
+            def guardar_edicion():
+                self.nombre = entry_nombre.get()
+                self.titulo = entry_titulo.get()
+                self._life = entry_vida.get()
+                self.location = entry_ubicacion.get()
+                self.hyst_description = text_historia.get("1.0", tk.END).strip()
+                try:
+                    nuevo_elemento = int(entry_elemento.get())
+                    if 1 <= nuevo_elemento <= 118:
+                        self.elemento = nuevo_elemento
+                    else:
+                        raise ValueError
+                except ValueError:
+                    messagebox.askokcancel("Error", "El elemento debe ser un número entre 1 y 118.")
+                    return
+                messagebox.askokcancel("Edición", "¡Datos del personaje actualizados!")
+                edit_win.destroy()
+
+            boton_guardar = tk.Button(edit_win, text="Guardar cambios",
+                                    bg="lightgreen", command=guardar_edicion)
+            boton_guardar.grid(row=6, column=1, pady=10, sticky='e')
+
+            boton_cancelar = tk.Button(edit_win, text="Cancelar", bg="lightgray",
+                                    command=edit_win.destroy)
+            boton_cancelar.grid(row=6, column=0, pady=10, sticky='w')
+
+
         boton_salir_info = tk.Button(panel, text='DESCARTAR', width=25, height=2,
                                      bg='gray80', command=cerrar_info)
         boton_seleccionar_personaje = tk.Button(panel, text='CREAR \nPERSONAJE',
                                                 width=25, height=4, bg='lightblue',
                                                 state='disabled', command=seleccionar_personaje)
-        with open('project_2_myth/nivel.txt', 'r', encoding='UTF-8') as nivel_r:
-            nivel_v = nivel_r.read()
+
+        with open('project_2_myth/nivel.txt', 'r', encoding='utf-8') as nivel_r:
+            nivel_v = nivel_r.read().strip()
         if nivel_v == '1':
             boton_seleccionar_personaje.config(state='normal')
         elif nivel_v == '2':
-            boton_seleccionar_personaje.config(state='active')
+            boton_seleccionar_personaje.config(state='normal')
+            # Botón editar solo para nivel 2
+            boton_editar = tk.Button(panel, text='EDITAR PERSONAJE',
+                                    width=25, height=2, bg='gold',
+                                    command=editar_personaje)
+            boton_editar.pack()
         boton_seleccionar_personaje.pack()
         boton_salir_info.pack()
 
@@ -464,25 +623,71 @@ def crear_ventana():
 
     def ver_version():
         """ consultar version y salir """
-        messagebox.showerror(message=f'version {M1_VER} \n \n \n'
+        actualizar_boton_acceso()
+        respuesta = messagebox.askokcancel(message=f'version {M1_VER} \n \n \n'
                             'si aceptas... la ventana se autodestruira\n gracias por la visita!',
                             title='Version')
-        main_panel.iconify()
-        ver_versiones()
-        main_panel.after(1000, salir)
+        if respuesta:
+            main_panel.iconify()
+            ver_versiones()
+            main_panel.after(2000, salir)
+
+    def printing():
+        """ fn imprimir datos de personajes """
+        print(' == ')
 
     def acceder():
-        """ fn solicitar acceso """
+        """ fn solicitar acceso o volver a nivel 0 """
+        actualizar_boton_acceso()
         with open('project_2_myth/nivel.txt', 'r', encoding='UTF-8') as nivel_r:
             nivel_v = nivel_r.read()
             nivel_n = int(nivel_v)
         if nivel_n >= 1:
-            messagebox.showerror(message=f'ya tienes acceso de nivel {nivel_v}')
-            boton_acceso.config(state='disabled', text=f'nivel {nivel_v}')
-        elif nivel_n == 2:
-            boton_acceso.config('Nivel Dios')
+            actualizar_boton_acceso()
+            respuesta = messagebox.askokcancel(
+                message=f'¿Deseas volver a nivel 0?\n(Tu nivel actual es {nivel_n})'
+            )
+            if respuesta:
+                with open('project_2_myth/nivel.txt', 'w', encoding='UTF-8') as nivel_w:
+                    nivel_w.write('0')
+                messagebox.askokcancel(message='Nivel de acceso restablecido a 0')
+                actualizar_boton_acceso()
+            else:
+                actualizar_boton_acceso()
         else:
+            printing()
+            main_panel.after(1000, actualizar_boton_acceso)
+            main_panel.after(1500, actualizar_boton_acceso)
+            main_panel.after(2000, actualizar_boton_acceso)
+            main_panel.after(4000, actualizar_boton_acceso)
+            main_panel.after(6000, actualizar_boton_acceso)
+            main_panel.after(8000, actualizar_boton_acceso)
+            main_panel.after(10000, actualizar_boton_acceso)
+            main_panel.after(12000, actualizar_boton_acceso)
+            main_panel.after(14000, actualizar_boton_acceso)
+            main_panel.after(16000, actualizar_boton_acceso)
+            main_panel.after(18000, actualizar_boton_acceso)
+            main_panel.after(20000, actualizar_boton_acceso)
+            main_panel.after(30000, actualizar_boton_acceso)
+            main_panel.after(40000, actualizar_boton_acceso)
             myth4_acceso.ventana_solicitud()
+
+    def actualizar_boton_acceso():
+        with open('project_2_myth/nivel.txt', 'r', encoding='UTF-8') as nivel_r:
+            nivel_v = nivel_r.read()
+            boton_acceso.config(state='normal', text=f'nivel {nivel_v}')
+            if nivel_v == '2':
+                main_panel.config(bg='gold')
+                boton_version.config(bg='gold')
+                credits_label.config(bg='gold')
+                #frame_encabezado.config(bg='gold')
+                #frame_superior.config(bg='gold')
+                #frame_principal.config(bg='gold')
+                #frame_inferior.config(bg='gold')
+                #names_label.config(bg='gold')
+                boton_acceso.config(borderwidth=0, fg='black')
+            else:
+                main_panel.config(bg='SystemButtonFace')
 
 
     # frames
@@ -583,13 +788,7 @@ def crear_ventana():
         )
         boton.grid(row=fila, column=columna)
 
-    with open('project_2_myth/nivel.txt', 'r', encoding='UTF-8') as nivel_r:
-        nivel_v = nivel_r.read()
-        nivel_n = int(nivel_v)
-        if nivel_n >= 1:
-            boton_acceso.config(state='disabled', text=f'nivel {nivel_v}')
-        else:
-            boton_acceso.config(state='normal')
+    actualizar_boton_acceso()
 
     boton_version = tk.Button(text=f'version {M1_VER[0]}.{M1_VER[1]}',
                                borderwidth=0, bg='gray95',
