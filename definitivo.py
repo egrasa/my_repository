@@ -12,32 +12,69 @@ import subprocess
 import matplotlib.pyplot as plt
 import numpy as np
 
+VERSION = 1.0
+
 class AgrupadorApp:
     """ Clase principal de la aplicación para agrupar nombres de archivos CSV """
     def __init__(self, master):
+        """ Inicializa la aplicación y crea la interfaz gráfica """
+        # Paleta de colores y fuente uniforme
+        style = ttk.Style()
+        style.theme_use('default')
+
+        # Colores suaves
+        color_bg = "#C8C8D6"         # Fondo general
+        color_frame = "#acafb9"      # Fondo de frames
+        color_accent = "#8ce7e2"     # Botones activos
+        color_button = "#bbc7d6"     # Botones normales
+        color_text = "#1b1b4d"       # Texto principal
+        color_entry_bg = "#c1dad1"  # Gris claro para cuando está activa
+
+        # Fuente uniforme
+        fuente = ("Segoe UI", 10)
+
+        # Aplica estilos generales
+        style.configure(".", font=fuente, background=color_bg, foreground=color_text)
+        style.configure("TFrame", background=color_frame)
+        style.configure("TLabel", background=color_frame, foreground=color_text, font=fuente)
+        style.configure("TEntry", fieldbackground=color_bg, foreground=color_text, font=fuente)
+        style.configure("TButton", background=color_button, foreground=color_text,
+                        font=fuente, padding=6)
+        style.configure("TLabelframe", background=color_frame, foreground=color_text,
+                        font=("Segoe UI", 10, "bold"))
+        style.configure("TLabelframe.Label", background=color_frame, foreground=color_text,
+                        font=("Segoe UI", 10, "bold"))
+        style.configure("Custom.TCheckbutton",
+            background=color_frame,
+            foreground=color_text,
+            font=fuente)
+        style.map("TEntry", fieldbackground=[("disabled", color_bg), ("focus", color_entry_bg)],
+                  foreground=[("focus", color_text)])
+        style.map("TButton", background=[("active", color_accent), ("disabled", color_frame)])
+
         self.root = master
-        self.root.title("Agrupador definitivo de Nombres CSV")
+        self.root.configure(bg=color_bg)
+        self.root.title(f"Agrupador definitivo de Nombres CSV - Versión {VERSION}")
         # Establecer la carpeta por defecto al iniciar
         self.directorio = tk.StringVar(
             value=r"C:\Users\Usuario\OneDrive\Escritorio\info_discos duros\csv")
         self.check_vars = {}
         self.frame_checks = None
         self.porcentaje_labels = {}
+        self.nombres_descartar_vars = {}
 
         # Nombres a descartar (pueden ser activados por el usuario)
         self.models = ['dinstar', 'adel1n', 'miadevil', 'emiliaaa', 'dinstar_sp',
                        'dinstar_process', 'dinstar_original', 'dinstar_downloads',
                        'adel1n_sp', 'emiliaaa_sp', 'miadevil_sp', 'Mia_']
-        self.assort = ['forcut', 'review', 'variety', 'errores', 'avi', 'mp4',
-                       'mkv', 'flv', 'mov', 'wmv', 'avi_original', 'xcut']
-        self.video_formats = []
+        self.assort = ['forcut', 'review', 'variety', 'errores', 'avi_original', 'xcut']
+        self.video_formats = ['avi', 'mp4', 'mkv', 'flv', 'mov', 'wmv']
         # Diccionario para agrupar los nombres a descartar por grupo
         self.nombres_descartar_grupos = {
             "Sp_Models": self.models,
             "Assort": self.assort,
-            "Video Formats": self.video_formats
+            "VideoFormats": self.video_formats
         }
-        self.nombres_descartar_vars = {}
 
         # Frame principal horizontal
         frame_main = ttk.Frame(self.root)
@@ -47,90 +84,100 @@ class AgrupadorApp:
         frame_left = ttk.Frame(frame_main)
         frame_left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
+        # --- BOTÓN MOSTRAR/OCULTAR frame_right ---
+        self.frame_right_visible = False  # Estado de visibilidad
+        self.boton_toggle = ttk.Button(frame_left, text="Opciones avanzadas ▶",
+                                       command=self.toggle_frame_right, state="disabled")
+        self.boton_toggle.pack(pady=5, anchor="ne")
+
+        # Frame derecho para los checkbuttons de nombres a descartar, agrupados por grupo
+        self.frame_right = ttk.LabelFrame(frame_main,
+                                     text="Nombres \n(activar para INCLUIR)", padding=10)
+        # NO se hace .pack todavia, se mostrará al hacer clic en el botón
+
         # Selección de carpeta
         frame_dir = ttk.Frame(frame_left, padding=10)
         frame_dir.pack(fill="x")
         ttk.Label(frame_dir, text="Carpeta:").pack(side="left")
         ttk.Entry(frame_dir, textvariable=self.directorio,
                   state="disabled", width=70).pack(side="left", padx=5)
-        self.boton_v = ttk.Button(frame_dir, text="V", width=3, style="alternative.TButton",
+        self.boton_v = ttk.Button(frame_dir, text="✅", width=4,
+                                  style="alternative.TButton",
                    command=self.confirmar_carpeta)
         self.boton_v.pack(side="left", padx=2)
-        ttk.Button(frame_dir, text="Carpeta...", command=self.seleccionar_carpeta).pack(side="left")
+        ttk.Button(frame_dir, text="📂 Carpeta...",
+                   command=self.seleccionar_carpeta).pack(side="left")
 
         frame_csv_select = ttk.Frame(frame_left)
         frame_csv_select.pack(fill="x", pady=(0, 5))
         frame_csv_boton = ttk.Frame(frame_left)
         frame_csv_boton.pack(fill="x", pady=(0, 5))
 
-        # Botón para leer archivos y generar checkbuttons
-        #self.leer_csv = ttk.Button(frame_dir, text="Leer CSV", state="disabled",
-                   #command=self.generar_checkbuttons)
-        #self.leer_csv.pack(pady=5, side="left")
-
         # Frame para los checkbuttons de archivos CSV
         self.frame_checks = ttk.LabelFrame(frame_left, text="Selecciona archivos CSV", padding=10)
         self.frame_checks.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Botones seleccionar/deseleccionar todos los archivos CSV
-        self.boton_csv_todos = ttk.Button(frame_csv_boton, text="todos",
+        self.boton_csv_todos = ttk.Button(frame_csv_boton, text="✔️", width=3,
                    command=self.seleccionar_todos_csv, state="disabled")
         self.boton_csv_todos.pack(side="left", padx=1)
-        self.boton_csv_ninguno = ttk.Button(frame_csv_boton, text="ninguno",
+        self.boton_csv_ninguno = ttk.Button(frame_csv_boton, text="⬜", width=3,
                    command=self.deseleccionar_todos_csv, state="disabled")
         self.boton_csv_ninguno.pack(side="left", padx=1)
 
         # Botón para generar TXT y gráficas
-        self.boton_grafica = ttk.Button(frame_left, text="Gráfica",
-                   command=self.generar_todo, state="normal")
+        self.boton_grafica = ttk.Button(frame_left, text="📊 Gráfica",
+                command=self.generar_todo, state="disabled")
         self.boton_grafica.pack(pady=10, side="left")
 
         # Botón para gráfica radar de pesos por nombre repetido
-        self.boton_radar = ttk.Button(frame_left, text="Radar pesos",
+        self.boton_radar = ttk.Button(frame_left, text="📈 Radar pesos",
                     command=self.graficar_radar_pesos, state="disabled")
         self.boton_radar.pack(pady=10, side="left")
 
         # Botón para abrir el archivo nombres_repetidos.txt
-        self.boton_abrir_txt = ttk.Button(frame_left, text="Abrir txt",
-                                          command=self.abrir_txt, state="disabled",)
+        self.boton_abrir_txt = ttk.Button(frame_left, text="📝 Abrir txt",
+                                        command=self.abrir_txt, state="disabled")
         self.boton_abrir_txt.pack(pady=10, side="left")
 
         # Botón para buscar nombres con peso 0 en archivos activos
-        self.boton_vacias = ttk.Button(frame_left, text="carpetas vacías", state="disabled",
-                   command=self.buscar_nombres_peso_cero)
+        self.boton_vacias = ttk.Button(frame_left, text="🗂️ Carpetas vacías", state="disabled",
+                command=self.buscar_nombres_peso_cero)
         self.boton_vacias.pack(pady=10, side="left")
 
         # Frame derecho para los checkbuttons de nombres a descartar, agrupados por grupo
-        frame_right = ttk.LabelFrame(frame_main,
-                                     text="Nombres \n(activar para INCLUIR)", padding=10)
-        frame_right.pack(side="right", fill="y", padx=5, pady=5)
+        self.frame_right = ttk.LabelFrame(frame_main,
+                                        text="Nombres \n(activar para INCLUIR)", padding=10)
+        # NO se hace .pack todavía, se mostrará al hacer clic en el botón
 
         # Botones seleccionar/deseleccionar todos los nombres a descartar
-        frame_nombres_select = ttk.Frame(frame_right)
+        # (DENTRO de self.frame_right)
+        frame_nombres_select = ttk.Frame(self.frame_right)
         frame_nombres_select.pack(fill="x", pady=(0, 5))
-        self.boton_select_todos = ttk.Button(frame_nombres_select, text="todos",
-                   command=self.seleccionar_todos_nombres, state="disabled")
+        self.boton_select_todos = ttk.Button(frame_nombres_select, text="✔️",
+                command=self.seleccionar_todos_nombres, state="disabled", width=3)
         self.boton_select_todos.pack(side="left", padx=1)
-        self.boton_select_ninguno = ttk.Button(frame_nombres_select, text="ninguno",
-                   command=self.deseleccionar_todos_nombres, state="disabled")
+        self.boton_select_ninguno = ttk.Button(frame_nombres_select, text="⬜",
+                command=self.deseleccionar_todos_nombres, state="disabled", width=3)
         self.boton_select_ninguno.pack(side="left", padx=1)
 
-        # Crear los checkbuttons por grupo
+        # Crear los checkbuttons por grupo (DENTRO de self.frame_right)
         for grupo, nombres in self.nombres_descartar_grupos.items():
-            grupo_frame = ttk.LabelFrame(frame_right, text=grupo, padding=5)
+            grupo_frame = ttk.LabelFrame(self.frame_right, text=grupo, padding=5)
             grupo_frame.pack(fill="x", padx=5, pady=5, side="left")
             for nombre in nombres:
-                var = tk.BooleanVar(value=False)  # Por defecto desactivados
-                chk = ttk.Checkbutton(grupo_frame, text=nombre, variable=var)
+                nombre_var = tk.BooleanVar(value=False)  # Por defecto desactivados
+                chk = ttk.Checkbutton(grupo_frame, text=nombre, variable=nombre_var,
+                                      style="Custom.TCheckbutton")
                 chk.pack(anchor="w", pady=2)
-                self.nombres_descartar_vars[nombre] = var
+                self.nombres_descartar_vars[nombre] = nombre_var
 
         # Entry y botón para buscar archivo CSV y habilitar su checkbutton
         frame_buscar_csv = ttk.Frame(frame_left)
         frame_buscar_csv.pack(fill="x", pady=(0, 5))
         self.label_buscar = ttk.Label(frame_csv_select, text="Buscar...")
-        self.entry_buscar_csv = ttk.Entry(frame_csv_select, width=40, state="disabled")
-        self.boton_activar = ttk.Button(frame_csv_select, text="activar", state="disabled",
+        self.entry_buscar_csv = ttk.Entry(frame_csv_select, width=40, state="disabled", style="TEntry")
+        self.boton_activar = ttk.Button(frame_csv_select, text="🔍 ejecutar", state="disabled",
                    command=self.buscar_y_activar_csv)
         self.boton_activar.pack(side="right", padx=10)
         self.entry_buscar_csv.pack(side="right", padx=5)
@@ -173,7 +220,7 @@ class AgrupadorApp:
 
         print("\n--- carpetas vacias ---")
         for archivo, nombres in nombres_peso_cero.items():
-            print(f"{archivo.split('.')[0]}: {', '.join(nombres) if nombres else 'Ninguno'}")
+            print(f"{os.path.splitext(archivo)[0]}: {', '.join(nombres) if nombres else 'Ninguno'}")
 
     def confirmar_carpeta(self):
         """Confirma la dirección escrita en el entry y actualiza los checkbuttons"""
@@ -182,6 +229,17 @@ class AgrupadorApp:
             self.generar_checkbuttons()
         else:
             messagebox.showerror("Error", "La carpeta escrita no es válida.")
+
+    def toggle_frame_right(self):
+        """ Alterna la visibilidad del frame derecho """
+        if self.frame_right_visible:
+            self.frame_right.pack_forget()
+            self.boton_toggle.config(text="Mostrar opciones avanzadas ▶")
+            self.frame_right_visible = False
+        else:
+            self.frame_right.pack(side="right", fill="y", padx=5, pady=5)
+            self.boton_toggle.config(text="Ocultar opciones avanzadas ◀")
+            self.frame_right_visible = True
 
     def buscar_y_activar_csv(self):
         """ Busca un archivo CSV por palabra y activa su checkbutton si lo encuentra """
@@ -257,10 +315,10 @@ class AgrupadorApp:
                 print(f"'{palabra}' en {archivo.split('.')[0]}:  "
                     f"{round(suma, 2)} GB -- {round(suma*100/total_peso, 1)} %")
         if not encontrado:
-            similares = difflib.get_close_matches(palabra, nombres_en_archivos, n=10, cutoff=0.8)
+            similares = difflib.get_close_matches(palabra, nombres_en_archivos, n=10, cutoff=0.75)
             if similares:
                 print(f"No se encontró '{palabra}'. "
-                    f"Palabras parecidas (>80%): {', '.join(similares)}")
+                    f"Palabras parecidas (>75%): {', '.join(similares)}")
                 parecida = messagebox.askokcancel("Buscar archivo",
                                 f"No se encontró ningún archivo CSV con '{palabra}\n'"
                                 f"quizas quisite decir [ {', '.join(similares)} ]")
@@ -326,6 +384,7 @@ class AgrupadorApp:
         self.boton_select_ninguno.config(state="normal")  # Habilitar botón
         self.entry_buscar_csv.config(state="normal")  # Habilitar entry
         self.boton_activar.config(state="normal")  # Habilitar botón
+        self.boton_toggle.config(state="normal")  # Habilitar botón
         carpeta = self.directorio.get()
         if not carpeta or not os.path.isdir(carpeta):
             messagebox.showerror("Error", "Selecciona una carpeta válida.")
@@ -345,7 +404,8 @@ class AgrupadorApp:
             frame_fila = ttk.Frame(col1 if i < mitad else col2)
             frame_fila.pack(fill="x", pady=2)
             var = tk.BooleanVar(value=True)
-            chk = ttk.Checkbutton(frame_fila, text=archivo.split('.')[0], variable=var)
+            chk = ttk.Checkbutton(frame_fila, text=archivo.split('.')[0], variable=var,
+                                   style="Custom.TCheckbutton")
             chk.pack(side="left", anchor="w")
             lbl = ttk.Label(frame_fila, text="")  # Etiqueta vacía al inicio
             lbl.pack(side="left", padx=5)
@@ -354,7 +414,7 @@ class AgrupadorApp:
 
     def abrir_txt(self):
         """Abre el archivo nombres_repetidos.txt con el programa predeterminado"""
-        carpeta = self.directorio.get()
+        carpeta = "C:\\Users\\Usuario\\OneDrive\\Escritorio\\info_discos duros\\listados"
         salida = os.path.join(carpeta, "nombres_repetidos.txt")
         if os.path.exists(salida):
             try:
@@ -547,6 +607,7 @@ class AgrupadorApp:
         if repetidos_info:
             scatter_por_nombres(repetidos_info, archivo_estilo,
                                 "Nombres repetidos en archivos seleccionados")
+
 
 if __name__ == "__main__":
     root = tk.Tk()
