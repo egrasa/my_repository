@@ -2,10 +2,59 @@
 import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
+from tkinter import ttk
 import os
 import csv
 
+VERSION = 1.1
+
 lista_carpetizados = []
+lista_eventos = []
+
+class ToolTip(object):
+    """ Clase para crear tooltips en widgets de Tkinter """
+    def __init__(self, widget, text, delay=600):
+        self.widget = widget
+        self.text = text
+        self.tipwindow = None
+        self.delay = delay  # milisegundos
+        self._after_id = None
+        widget.bind("<Enter>", self.schedule_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def schedule_tip(self, event=None):
+        """ Programa la aparición del tooltip """
+        lista_eventos.append(event)
+        self._after_id = self.widget.after(self.delay, self.show_tip)
+
+    def show_tip(self, event=None):
+        """ Muestra el tooltip """
+        lista_eventos.append(event)
+        if self.tipwindow or not self.text:
+            return
+        x, y, _, cy = self.widget.bbox("insert")
+        x = x + self.widget.winfo_rootx() + 30
+        y = y + cy + self.widget.winfo_rooty() + 10
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify='left',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("Arial", 8))
+        label.pack(ipadx=4, ipady=2)
+
+    def hide_tip(self, event=None):
+        """ Oculta el tooltip """
+        lista_eventos.append(event)
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
+
 def actualizar_estado_boton_crear():
     """ fn actualizar estado del boton crear """
     carpeta = label_carpeta.cget("text")
@@ -36,7 +85,7 @@ def seleccionar_carpeta():
     boton_mpassrojo.config(state='disabled', bg='lightgray')
     boton_secret.config(state='disabled', bg='lightgray')
     boton_expansion.config(state='disabled', bg='lightgray')
-    label_carpeta.config(fg='darkgreen')
+    label_carpeta.config(fg='darkblue')
     entrada_nombre.config(state='normal', fg='gray40')
     if carpeta:
         label_carpeta.config(text=carpeta)
@@ -86,6 +135,10 @@ def seleccionar_carpeta():
     else:
         label_carpeta.config(text="No se ha seleccionado ninguna carpeta")
         actualizar_estado_boton_crear()
+    # Resetear barra y texto de estado al seleccionar carpeta
+    progress['value'] = 0
+    progress.config(style="gray.Horizontal.TProgressbar")
+    label_estado.config(text="")
 
 def crear_archivo():
     """ fn crear archivo txt y csv """
@@ -94,6 +147,12 @@ def crear_archivo():
     carpeta2 = "C:/Users/Usuario/OneDrive/Escritorio/info_discos duros"
 
     if nombre_archivo and carpeta:
+        dirs_total = sum(len(dirs) for _, dirs, _ in os.walk(carpeta))
+        progress['maximum'] = dirs_total if dirs_total > 0 else 1
+        progress['value'] = 0
+        progress.config(style="green.Horizontal.TProgressbar")
+        ventana.update_idletasks()
+
         ruta_txt = os.path.join(carpeta, f"{nombre_archivo}.txt")
         ruta_txt2 = os.path.join(carpeta2, f"{nombre_archivo}.txt")
         ruta_csv = os.path.join(carpeta, f"{nombre_archivo}.csv")
@@ -105,24 +164,30 @@ def crear_archivo():
             csv_writer = csv.writer(archivo_csv)
             csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen"])
 
+            count = 0
             for root, dirs, _ in os.walk(carpeta):
                 for diri in dirs:
                     dir_path = os.path.join(root, diri)
-                    #print(dir_path.split('/')[1])
                     size = sum(os.path.getsize(os.path.join(dir_path, f))
                                for f in os.listdir(dir_path)
                                if os.path.isfile(os.path.join(dir_path, f)))
                     size_gb = size / (1024 ** 3)
                     archivo_txt.write(f"{diri}: {size_gb:.2f} GB\n")
                     csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1]])
-            print("archivo txt creado:", ruta_txt2)
+                    count += 1
+                    progress['value'] = count
+                    porcentaje = int((count / progress['maximum']) * 100)
+                    label_estado.config(text=f"Procesando... {porcentaje}%")
+                    ventana.update_idletasks()
 
+        # Repite el mismo proceso para el segundo archivo
         with open(ruta_txt2, 'w', encoding='utf-8') as archivo_txt, \
              open(ruta_csv2, 'w', newline='', encoding='utf-8') as archivo_csv:
 
             csv_writer = csv.writer(archivo_csv)
             csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen"])
 
+            count = 0
             for root, dirs, _ in os.walk(carpeta):
                 for diri in dirs:
                     dir_path = os.path.join(root, diri)
@@ -132,9 +197,15 @@ def crear_archivo():
                     size_gb = size / (1024 ** 3)
                     archivo_txt.write(f"{diri}: {size_gb:.2f} GB\n")
                     csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1]])
-            print("archivo csv creado:", ruta_csv2)
+                    count += 1
+                    progress['value'] = count
+                    porcentaje = int((count / progress['maximum']) * 100)
+                    label_estado.config(text=f"Procesando... {porcentaje}%")
+                    ventana.update_idletasks()
 
-        #label_estado.config(text=f"Archivos creados: {ruta_txt}\n")
+        progress['value'] = progress['maximum']
+        label_estado.config(text="¡Procesamiento finalizado!")
+        ventana.update_idletasks()
 
 def dar_nombre(nombre):
     """ fn dar nombre """
@@ -282,21 +353,49 @@ def mostrar_archivos():
 # Crear la ventana principal
 ventana = tk.Tk()
 ventana.title("Gestor de Archivos")
-ventana.geometry("600x320")
+ventana.geometry("600x340")
+ventana.configure(bg='lightgray')
+
+style = ttk.Style()
+style.theme_use('default')
+style.configure("gray.Horizontal.TProgressbar", troughcolor='lightgray', background='lightgray')
+style.configure("green.Horizontal.TProgressbar", troughcolor='lightgray', background='green')
 
 # Botón para seleccionar carpeta
 boton_seleccionar = tk.Button(ventana, text="Seleccionar Carpeta", width=30, fg='blue',
-                              height=3, bg='lightblue', command=seleccionar_carpeta)
+                              height=3, bg='lightblue', command=seleccionar_carpeta,
+                              relief='groove')
 boton_seleccionar.pack(pady=5)
 
-# Label para mostrar la carpeta seleccionada
-label_carpeta = tk.Label(ventana, text="No se ha seleccionado ninguna carpeta",
-                         fg='gray60', width=50)
-label_carpeta.pack(pady=5)
+# frames
+frame_opciones = tk.Frame(ventana, bg='lightgray')
+frame_opciones.pack(pady=0)
 
-# frame botones
-frame_botones = tk.Frame(ventana)
-frame_botones.pack(pady=5)
+frame_botones = tk.Frame(ventana, bg='lightgray')
+frame_botones.pack(pady=0)
+
+frame_barra = tk.Frame(ventana, bg='lightgray')
+frame_barra.pack(padx=25, pady=10, expand=True, fill='x')
+
+frame_lower = tk.Frame(ventana, bg='darkred', height=2)
+frame_lower.pack(pady=0, fill='x', expand=True)
+
+# Label para mostrar la carpeta seleccionada
+label_carpeta = tk.Label(frame_barra, text="No se ha seleccionado ninguna carpeta",
+                         fg='darkblue', width=40, bg='lightgray', font=('new courier', 8))
+label_carpeta.pack(pady=0, side='left')
+
+# Entrada para el nombre del archivo
+entrada_nombre = tk.Entry(frame_opciones, width=30, fg='gray60', state='normal',
+                          bg='lightgray', font=('new courier', 10), background='lightgray')
+entrada_nombre.pack(padx=10, pady=5, side='left')
+entrada_nombre.insert(0, "Nombre")
+entrada_nombre.bind("<KeyRelease>", lambda event: actualizar_estado_boton_crear())
+
+# Botón para crear el archivo
+boton_crear = tk.Button(frame_opciones, text="Crear Archivo", height=2, width=10, bg='lightgray',
+                        command=crear_archivo, state='disabled', borderwidth=0)
+boton_crear.pack(padx=2, pady=5, side='left')
 
 # Botones para seleccionar nombres
 boton_old = tk.Button(frame_botones, text="Elements14Tb_old", width=20, command=nombre_old,
@@ -371,26 +470,33 @@ boton_expansion = tk.Button(frame_botones, text="Seagate10Tb_Expansion", width=2
                         command=nombre_expansion, state='disabled', bg='lightgray')
 boton_expansion.grid(pady=0, row=5, column=2)
 
-# Entrada para el nombre del archivo
-entrada_nombre = tk.Entry(ventana, width=40, fg='gray60', state='disabled')
-entrada_nombre.pack(padx=20, pady=5, side='left')
-entrada_nombre.insert(0, "Nombre")
-entrada_nombre.bind("<KeyRelease>", lambda event: actualizar_estado_boton_crear())
-
-
-# Botón para crear el archivo
-boton_crear = tk.Button(ventana, text="Crear Archivo", height=3, width=15,
-                        command=crear_archivo, state='disabled', borderwidth=0)
-boton_crear.pack(padx=0, pady=5, side='left')
-
 # Botón para mostrar los archivos creados
-boton_mostrar = tk.Button(ventana, text="Mostrar Archivos", height=3, width=15,
-                          command=mostrar_archivos, state='normal', borderwidth=0)
-boton_mostrar.pack(padx=0, pady=5, side='left')
+boton_mostrar = tk.Button(frame_opciones, text="Ver Creados", height=2, width=15,
+                          command=mostrar_archivos, state='normal', borderwidth=0, bg='lightgray')
+boton_mostrar.pack(padx=2, pady=5, side='left')
 
 # Label para mostrar el estado
-label_estado = tk.Label(ventana, text="")
-label_estado.pack(pady=5, side='bottom')
+label_estado = tk.Label(frame_barra, text="", font=("Arial", 8), bg='lightgray', fg='darkgreen')
+
+# Barra de progreso desactivada al inicio
+progress = ttk.Progressbar(frame_barra, orient='horizontal', length=100, mode='determinate',
+                           style="gray.Horizontal.TProgressbar", name="progressbar")
+progress.pack(padx=10, pady=0, side='right', fill='x', anchor='w')
+label_estado.pack(padx=5, pady=2, side='right', anchor='w')
+
+label_version = tk.Label(ventana, text=f"Versión: {VERSION}", bg='lightgray', fg='darkgray',
+                        font=('new courier', 8))
+label_version.pack(padx=10, pady=5, side='bottom', anchor='e')
+
+# Tooltip para botones
+ToolTip(boton_seleccionar, "Permite seleccionar la carpeta que quieras procesar")
+ToolTip(boton_crear, "Crea un archivo txt y csv con el nombre que hayas elegido")
+ToolTip(boton_mostrar, "Permite ver los archivos creados en esta sesion")
+ToolTip(entrada_nombre, "Introduce el nombre del archivo que quieres crear")
+ToolTip(label_carpeta, "Carpeta seleccionada para procesar")
+ToolTip(progress, "Barra de progreso de creación de archivos")
+ToolTip(label_version, f"Versión actual del programa: {VERSION}")
 
 # Iniciar el bucle principal de la interfaz
 ventana.mainloop()
+print(lista_eventos)
