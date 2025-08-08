@@ -1,4 +1,4 @@
-""" Analizador de vídeos en una carpeta """
+""" Analizador de vídeos contenidos en una carpeta """
 
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
@@ -771,3 +771,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = AnalizadorVideosApp(root)
     root.mainloop()
+
