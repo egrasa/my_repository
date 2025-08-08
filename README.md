@@ -1,5 +1,6 @@
 # my_repository
 repositorio donde guardar mis proyectos
 
-creaciones para aprender y divertirme
-cualquier uso de este codigo es libre pero debe ser usado con responsabilidad.
+Creaciones para aprender y divertirme.
+Cualquier uso de este codigo es libre.
+Gracias por leer hasta aqui.
