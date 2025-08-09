@@ -10,22 +10,34 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+VERSIONBASE = 1         # Versión base del programa (cambios importantes)
+VERSIONFUNCIONAL = 1.1  # Versión funcional (nuevas funcionalidades)
+VERSIONTABLA = 2    # Versión de la tabla periódica (cambios en la tabla)
+
+version_total = (VERSIONBASE,  VERSIONFUNCIONAL, VERSIONTABLA)
+print(f"Versión del programa: {version_total[0]}.{version_total[1]}.{version_total[2]}")
+
 # --- Clase Tooltip ---
 class ToolTip:
     """ Clase para crear tooltips en widgets de Tkinter """
+    event_list = []
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
         self.tipwindow = None
-        widget.bind("<Enter>", self.show_tip)
+        self.id = None  # ID del temporizador
+        widget.bind("<Enter>", self.schedule_tip)
         widget.bind("<Leave>", self.hide_tip)
+
+    def schedule_tip(self, event=None):
+        """ Programa la aparición del tooltip después de 1 segundo """
+        self.id = self.widget.after(1000, self.show_tip)
+        ToolTip.event_list.append(event)  # Guardar el evento para evitar problemas de referencia
 
     def show_tip(self, event=None):
         """ Muestra el tooltip en la posición del cursor """
         if self.tipwindow or not self.text:
             return
-        eventos = []
-        eventos.append(event)
         x, y, cx, cy = self.widget.bbox("insert") if self.widget.winfo_ismapped() else (0, 0, 0, 0)
         x = x + self.widget.winfo_rootx() + 40 + cx
         y = y + self.widget.winfo_rooty() + 20 + cy
@@ -36,15 +48,17 @@ class ToolTip:
                          background="#e2e2d8", relief='solid', borderwidth=1,
                          font=("courier new", 12), fg="#052A8D")
         label.pack(ipadx=1)
+        ToolTip.event_list.append(event)
 
     def hide_tip(self, event=None):
-        """ Oculta el tooltip """
-        eventos = []
-        eventos.append(event)
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
+        """ Oculta el tooltip y cancela el temporizador """
+        if self.id:
+            self.widget.after_cancel(self.id)
+            self.id = None
+        if self.tipwindow:
+            self.tipwindow.destroy()
+            self.tipwindow = None
+        ToolTip.event_list.append(event)
 
 class Elemento:
     """ Clase para representar un elemento de la tabla periódica """
@@ -207,6 +221,7 @@ def leer_elementos():
     # Limpiar el texto antes de mostrar
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     if elementos:
         for elemento in elementos:
             linea = ", ".join(f"{k}: {v}" for k, v in vars(elemento).items())
@@ -233,6 +248,7 @@ def buscar_elemento():
             break
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     if encontrado:
         # Actualiza los labels
         label_z.config(text=f" {encontrado.atomic_number} ")
@@ -272,6 +288,7 @@ def mostrar_metales():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     metales = [e for e in elementos if str(e.metal).strip().lower() == "yes"]
     # Cambiar color de los botones de metales
     #for boton in botones_por_z.values():
@@ -296,6 +313,7 @@ def mostrar_gases():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     gases = [e for e in elementos if str(e.phase).strip().lower() == "gas"]
     # Cambiar color de los botones de gases
     #for btn in botones_por_z.values():
@@ -320,6 +338,7 @@ def mostrar_gases_nobles():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     gases_nobles = [e for e in elementos if str(e.type_).strip() == "Noble Gas"]
     # Cambiar color de los botones de gases nobles
     #for boton_gas in botones_por_z.values():
@@ -344,6 +363,7 @@ def mostrar_actinidos():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     actinidos = [e for e in elementos if str(e.type_).strip() == "Actinide"]
     # Cambiar color de los botones de actínidos
     #for boton_actinido in botones_por_z.values():
@@ -351,7 +371,7 @@ def mostrar_actinidos():
     for elem4 in actinidos:
         z = str(elem4.atomic_number)
         if z in botones_por_z:
-            botones_por_z[z].config(bg="#704D19")  # Naranja oscuro
+            botones_por_z[z].config(bg="#809291")  # Naranja oscuro
     if actinidos:
         for elem4 in actinidos:
             texto_resultado.insert(
@@ -368,6 +388,7 @@ def mostrar_lantanidos():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     lantanidos = [e for e in elementos if str(e.type_).strip() == "Lanthanide"]
     # Cambiar color de los botones de lantánidos
     #for boton_lantanido in botones_por_z.values():
@@ -375,13 +396,15 @@ def mostrar_lantanidos():
     for elem3 in lantanidos:
         z = str(elem3.atomic_number)
         if z in botones_por_z:
-            botones_por_z[z].config(bg="#BB9F03")  # Dorado
+            botones_por_z[z].config(bg="#AFCCC3")  # Dorado
     if lantanidos:
         for elem3 in lantanidos:
             texto_resultado.insert(
                 tk.END, f"{elem3.atomic_number}: {elem3.element} ({elem3.symbol})\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron lantánidos.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def mostrar_radiactivos_fg_verde():
@@ -390,7 +413,7 @@ def mostrar_radiactivos_fg_verde():
         if str(elem_r.radioactive).strip().lower() == "yes":
             z = str(elem_r.atomic_number)
             if z in botones_por_z:
-                botones_por_z[z].config(fg="#1CAD1C")
+                botones_por_z[z].config(fg="#194B19")
         else:
             z = str(elem_r.atomic_number)
             if z in botones_por_z:
@@ -399,13 +422,16 @@ def mostrar_radiactivos_fg_verde():
 def resetear():
     """Restaura la interfaz al estado inicial"""
     # Restaurar labels
-    label_z.config(text="Z ")
-    label_nombre.config(text="Nombre: ")
-    label_simbolo.config(text="Símbolo: ")
+    label_z.config(text=" - ")
+    label_nombre.config(text=" --- ")
+    label_simbolo.config(text=" - ")
     # Restaurar cuadro de texto
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
+    texto_alternativo.config(state="normal")
+    texto_alternativo.delete(1.0, tk.END)
+    texto_alternativo.config(state="disabled")
     # Restaurar color de los botones
     for btn in botones_por_z.values():
         btn.config(bg="SystemButtonFace")
@@ -419,14 +445,27 @@ def resetear():
     mostrar_lantanidos()
 
 def mostrar_elemento_en_columnas_tab(elemento):
-    """Muestra los atributos del elemento en un Text widget en formato de columnas"""
+    """Muestra los atributos del elemento en dos Text widgets en formato de columnas"""
     texto_resultado.config(state="normal")
+    texto_alternativo.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
-    texto_resultado.insert(tk.END, "Atributo\t\t\t Valor\n")
-    texto_resultado.insert(tk.END, "---------\t\t\t-------\n")
-    for k, v in vars(elemento).items():
-        texto_resultado.insert(tk.END, f"{k}\t\t\t  {v}\n")
+    texto_alternativo.delete(1.0, tk.END)
+
+    texto_resultado.insert(tk.END, "----------------------------------------\n")
+    texto_alternativo.insert(tk.END, "----------------------------------------\n")
+
+    atributos = list(vars(elemento).items())
+    mitad = len(atributos) // 2
+
+    for k, v in atributos[:mitad]:
+        texto_resultado.insert(tk.END, f" {k:<24} {v} \n")
+    texto_resultado.insert(tk.END, "----------------------------------------\n")
+    for k, v in atributos[mitad:]:
+        texto_alternativo.insert(tk.END, f" {k:<24} {v} \n")
+    texto_alternativo.insert(tk.END, "----------------------------------------\n")
+
     texto_resultado.config(state="disabled")
+    texto_alternativo.config(state="disabled")
 
 def mostrar_grafica_elemento():
     """Muestra una gráfica de barras con los parámetros seleccionados del elemento"""
@@ -522,6 +561,7 @@ def mostrar_grafica_elemento():
 
     plt.tight_layout()
     plt.show()
+    #representar_atomo()
 
 def mostrar_grafica_radio_atomico():
     """Muestra una gráfica de barras con los valores de radio atómico de todos los elementos"""
@@ -672,6 +712,7 @@ def mostrar_busqueda_avanzada():
                     resultados.append(e)
         texto_resultado.config(state="normal")
         texto_resultado.delete(1.0, tk.END)
+        texto_alternativo.delete(1.0, tk.END)
         texto_resultado.insert(tk.END, f"Resultados para {prop} {op} {valor}:\n")
         if resultados:
             for elem9 in resultados:
@@ -837,6 +878,7 @@ def mostrar_protones_igual_neutrones():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.delete(1.0, tk.END)
     iguales = []
     for e in elementos:
         try:
@@ -858,17 +900,19 @@ def mostrar_protones_igual_neutrones():
     texto_resultado.config(state="disabled")
 
 root = tk.Tk()
-root.title("Tabla Periódica de los Elementos")
-root.geometry("1100x1000")  # Ventana más grande
+root.title("Tabla Periódica de los Elementos"
+           f" - v{version_total[0]}.{version_total[1]}.{version_total[2]}")
+root.geometry("1100x860")  # Ventana más grande
 
 tipo_grafica = tk.StringVar(value="barras")
 
 frame_top = tk.Frame(root)
-frame_top.pack(pady=5)
+frame_top.pack(pady=5, expand=True, fill=tk.X)
+frame_top.config(bg="#494C50")  # Fondo oscuro
 
 # Añade estos labels después de crear frame_top y antes del Text
 frame_labels = tk.Frame(root)
-frame_labels.pack(pady=5)
+frame_labels.pack(pady=10, expand=True, fill=tk.X)
 
 # Crear un frame para los botones de los elementos
 frame_botones = tk.Frame(root)
@@ -883,15 +927,22 @@ frame_tipo_grafica.pack(side="right", padx=10)
 frame_checks = tk.Frame(root)
 frame_checks.pack(side="right", padx=10, pady=10, anchor="n")
 
-label_z = tk.Label(frame_labels, text=" ", font=("Arial", 20, "bold"), width=10,
-                   anchor="w")
-label_z.pack(side=tk.LEFT, padx=5)
-label_nombre = tk.Label(frame_labels, text="Elemento ", font=("Arial", 16, "bold"),
-                        width=20, anchor="w")
-label_nombre.pack(side=tk.LEFT, padx=5)
-label_simbolo = tk.Button(frame_labels, text=" ", font=("Arial", 20, "bold"), bg="lightgray",
-                         width=4, anchor="w", command= mostrar_grafica_elemento)
-label_simbolo.pack(side=tk.LEFT, padx=5)
+# Mejorar el aspecto visual de las etiquetas y botones en frame_labels
+frame_labels.config(bg="#96ACC0", padx=0, pady=0)  # Fondo oscuro y padding
+
+label_z = tk.Label(frame_labels, text=" ", font=("mistral", 20, "bold"), width=4,
+                   anchor="n", bg="#96ACC0", fg="#3F3F3F", relief="flat", bd=2)
+label_z.pack(side=tk.LEFT, padx=10, pady=5)
+
+label_nombre = tk.Label(frame_labels, text="Elemento ", font=("mistral", 20, "bold"),
+                        width=20, anchor="n", bg="#96ACC0", fg="#3F3F3F", relief="flat", bd=2)
+label_nombre.pack(side=tk.LEFT, padx=10, pady=5)
+
+label_simbolo = tk.Button(frame_labels, text=" ", font=("mistral", 20, "bold"), bg="#96ACC0",
+                          fg="#3F3F3F", width=4, anchor="sw", relief="groove", bd=3,
+                          activebackground="#444444", activeforeground="#FFFFFF",
+                          command=mostrar_grafica_elemento)
+label_simbolo.pack(side=tk.RIGHT, padx=10, pady=5)
 
 #tk.Label(frame_tipo_grafica, text="Tipo de gráfica:", font=("Arial", 10, "bold")).pack(anchor="w")
 tk.Radiobutton(frame_tipo_grafica, text="Barras", variable=tipo_grafica, value="barras",
@@ -931,11 +982,11 @@ def desmarcar_todos():
     for v in vars_grafica.values():
         v.set(0)
 
-boton_marcar_todos = tk.Button(frame_checks, text="todos", width=10, bg="lightgray",
+boton_marcar_todos = tk.Button(frame_checks, text="marcar todos", width=20, bg="lightgray",
                                command=marcar_todos, font=("Arial", 9), relief="groove")
 boton_marcar_todos.pack(side="top", pady=(0, 2), anchor="w")
 
-boton_desmarcar_todos = tk.Button(frame_checks, text="ninguno", width=10, bg="lightgray",
+boton_desmarcar_todos = tk.Button(frame_checks, text="quitar todos", width=20, bg="lightgray",
                                   command=desmarcar_todos, font=("Arial", 9), relief="groove")
 boton_desmarcar_todos.pack(side="top", pady=(0, 2), anchor="w")
 
@@ -947,52 +998,58 @@ for texto, clave in parametros_grafica:
                       font=("Arial", 10),
                       anchor="w",
                       width=18)
-    chk.pack(side="top", pady=1, anchor="w")  # De arriba a abajo
+    chk.pack(side="top", pady=0, anchor="w")  # De arriba a abajo
     vars_grafica[clave] = var
 
-entry_buscar = tk.Entry(frame_top, font=("Arial", 12), width=20)
+entry_buscar = tk.Entry(frame_top, font=("Arial", 12), width=20, fg="#F0F0F0", bg="#494C50")
 entry_buscar.pack(side=tk.LEFT, padx=5)
 entry_buscar.insert(0, "Hydrogen")  # Valor por defecto
 
-boton_buscar = tk.Button(frame_top, text="Buscar", command=buscar_elemento,
-                          font=("Arial", 10))
+boton_buscar = tk.Button(frame_top, text="Buscar", command=buscar_elemento, borderwidth=0,
+                          font=("Arial", 10), bg="#494C50", fg="#F0F0F0")
 entry_buscar.bind("<Return>", lambda event: buscar_elemento())
 boton_buscar.pack(side=tk.LEFT, padx=5)
 
-boton_busqueda_avanzada = tk.Button(frame_top, text="Búsqueda avanzada",
-                                    command=mostrar_busqueda_avanzada, font=("Arial", 10))
+boton_busqueda_avanzada = tk.Button(frame_top, text="Búsqueda avanzada", bg="#494C50",
+                                    fg="#F0F0F0", command=mostrar_busqueda_avanzada,
+                                    font=("Arial", 10), borderwidth=0)
 boton_busqueda_avanzada.pack(side=tk.LEFT, padx=5)
 
 boton_atomo = tk.Button(frame_top, text="Átomo (Bohr)", command=representar_atomo,
-                        font=("Arial", 10), bg="lightgray")
+                        font=("Arial", 10), bg="#494C50", fg="#F0F0F0", borderwidth=0)
 boton_atomo.pack(side=tk.LEFT, padx=5)
 
-boton_metal = tk.Button(frame_top, text="Metal", borderwidth=0,
-                        command=mostrar_metales, font=("new courier", 8))
+boton_metal = tk.Button(frame_top, text="Metal", borderwidth=0, command=mostrar_metales,
+                        font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
 boton_metal.pack(side=tk.LEFT, padx=5)
 
-boton_gas = tk.Button(frame_top, text="Gas", borderwidth=0,
-                      command=mostrar_gases, font=("new courier", 8))
+boton_gas = tk.Button(frame_top, text="Gas", borderwidth=0, command=mostrar_gases,
+                      font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
 boton_gas.pack(side=tk.LEFT, padx=5)
 
-boton_gas_noble = tk.Button(frame_top, text="Gas Noble", borderwidth=0,
-                            command=mostrar_gases_nobles, font=("new courier", 8))
+boton_gas_noble = tk.Button(frame_top, text="Gas Noble", borderwidth=0, font=("new courier", 8),
+                            command=mostrar_gases_nobles, bg="#494C50", fg="#F0F0F0")
 boton_gas_noble.pack(side=tk.LEFT, padx=5)
 
-boton_lantanido = tk.Button(frame_top, text="Lantánido", borderwidth=0,
-                            command=mostrar_lantanidos, font=("new courier", 8))
+boton_lantanido = tk.Button(frame_top, text="Lantánido", borderwidth=0, command=mostrar_lantanidos,
+                            font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
 boton_lantanido.pack(side=tk.LEFT, padx=5)
 
-boton_actinido = tk.Button(frame_top, text="Actínido", borderwidth=0,
-                           command=mostrar_actinidos, font=("new courier", 8))
+boton_actinido = tk.Button(frame_top, text="Actínido", borderwidth=0, command=mostrar_actinidos,
+                           font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
 boton_actinido.pack(side=tk.LEFT, padx=5)
 
 #boton_x = tk.Button(frame_top, text="X", command=mostrar_protones_igual_neutrones,
                     #font=("new courier", 8))
 #boton_x.pack(side=tk.LEFT, padx=5)
 
-boton_reset = tk.Button(frame_top, text="Resetear", command=resetear, font=("new courier", 8))
+boton_reset = tk.Button(frame_top, text="Resetear", command=resetear, font=("new courier", 8),
+                        bg="#494C50", fg="#F0F0F0", borderwidth=0)
 boton_reset.pack(side=tk.LEFT, padx=5)
+
+label_version = tk.Label(frame_top, text=f"v{version_total[0]}.{version_total[1]}",
+                         font=("Arial", 10), bg="#494C50", fg="#CACACA")
+label_version.pack(side=tk.RIGHT, padx=5)
 
 boton_grafica = tk.Button(frame_graficas, text="radios atomicos", height=1, width=12,
                           relief="ridge", command=mostrar_grafica_radio_atomico,
@@ -1025,10 +1082,15 @@ boton_grafica_radar_sh = tk.Button(
 )
 boton_grafica_radar_sh.pack(pady=2, side="left")
 
-texto_resultado = tk.Text(root, width=600, height=32,
+texto_resultado = tk.Text(root, width=60, height=32,
                           font=("Consolas", 10), bg="#222222", fg="#00FF00")
-texto_resultado.pack(padx=10, pady=10, side="left")
+texto_resultado.pack(padx=5, pady=10, side="left")
 texto_resultado.config(state="disabled")
+
+texto_alternativo = tk.Text(root, width=60, height=32,
+                            font=("Consolas", 10), bg="#222222", fg="#00FF00")
+texto_alternativo.pack(padx=5, pady=10, side="left")
+texto_alternativo.config(state="disabled")
 
 leer_elementos()  # Cargar los elementos al iniciar
 
