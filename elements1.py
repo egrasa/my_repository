@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 VERSIONBASE = 1         # Versión base del programa (cambios importantes)
-VERSIONFUNCIONAL = 1.1  # Versión funcional (nuevas funcionalidades)
+VERSIONFUNCIONAL = 1.2  # Versión funcional (nuevas funcionalidades)
 VERSIONTABLA = 2    # Versión de la tabla periódica (cambios en la tabla)
 
 version_total = (VERSIONBASE,  VERSIONFUNCIONAL, VERSIONTABLA)
@@ -129,6 +129,26 @@ class Elemento:
 elementos = []
 boton_seleccionado = [None]
 
+# Cargar nombres en español de los elementos por número atómico
+elementos_es = {}
+elementos_es_sin_acentos = {}
+try:
+    ruta_es = os.path.join(os.path.dirname(__file__), "elementos_es.csv")
+    with open(ruta_es, encoding="utf-8") as f_es:
+        reader_es = csv.reader(f_es)
+        for row in reader_es:
+            if len(row) >= 2:
+                numero_atomico = row[0].strip()
+                nombre_es = row[1].strip()
+                nombre_sin_acentos = row[2].strip() if len(row) >= 3 else ""
+                if numero_atomico:
+                    if nombre_es:
+                        elementos_es[numero_atomico] = nombre_es
+                    if nombre_sin_acentos:
+                        elementos_es_sin_acentos[numero_atomico] = nombre_sin_acentos
+except (FileNotFoundError, csv.Error, OSError) as e:
+    print(f"Error al leer elementos_es.csv: {e}")
+
 def graficar_generico(x, y, titulo, xlabel, ylabel, color='#4682B4', etiquetas=None):
     """Genera una gráfica genérica de barras o líneas según el tipo seleccionado."""
     tipo = tipo_grafica.get()
@@ -182,36 +202,36 @@ def leer_elementos():
     try:
         with open(ruta, encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            for row in reader:
+            for row0 in reader:
                 elemento = Elemento(
-                    row.get("AtomicNumber", ""),
-                    row.get("Element", ""),
-                    row.get("Symbol", ""),
-                    row.get("AtomicMass", ""),
-                    row.get("NumberofNeutrons", ""),
-                    row.get("NumberofProtons", ""),
-                    row.get("NumberofElectrons", ""),
-                    row.get("Period", ""),
-                    row.get("Group", ""),
-                    row.get("Phase", ""),
-                    row.get("Radioactive", ""),
-                    row.get("Natural", ""),
-                    row.get("Metal", ""),
-                    row.get("Nonmetal", ""),
-                    row.get("Metalloid", ""),
-                    row.get("Type", ""),
-                    row.get("AtomicRadius", ""),
-                    row.get("Electronegativity", ""),
-                    row.get("FirstIonization", ""),
-                    row.get("Density", ""),
-                    row.get("MeltingPoint", ""),
-                    row.get("BoilingPoint", ""),
-                    row.get("NumberOfIsotopes", ""),
-                    row.get("Discoverer", ""),
-                    row.get("Year", ""),
-                    row.get("SpecificHeat", ""),
-                    row.get("NumberofShells", ""),
-                    row.get("NumberofValence", "")
+                    row0.get("AtomicNumber", ""),
+                    row0.get("Element", ""),
+                    row0.get("Symbol", ""),
+                    row0.get("AtomicMass", ""),
+                    row0.get("NumberofNeutrons", ""),
+                    row0.get("NumberofProtons", ""),
+                    row0.get("NumberofElectrons", ""),
+                    row0.get("Period", ""),
+                    row0.get("Group", ""),
+                    row0.get("Phase", ""),
+                    row0.get("Radioactive", ""),
+                    row0.get("Natural", ""),
+                    row0.get("Metal", ""),
+                    row0.get("Nonmetal", ""),
+                    row0.get("Metalloid", ""),
+                    row0.get("Type", ""),
+                    row0.get("AtomicRadius", ""),
+                    row0.get("Electronegativity", ""),
+                    row0.get("FirstIonization", ""),
+                    row0.get("Density", ""),
+                    row0.get("MeltingPoint", ""),
+                    row0.get("BoilingPoint", ""),
+                    row0.get("NumberOfIsotopes", ""),
+                    row0.get("Discoverer", ""),
+                    row0.get("Year", ""),
+                    row0.get("SpecificHeat", ""),
+                    row0.get("NumberofShells", ""),
+                    row0.get("NumberofValence", "")
                 )
                 elementos.append(elemento)
     except (FileNotFoundError, csv.Error, OSError) as e:
@@ -221,18 +241,21 @@ def leer_elementos():
     # Limpiar el texto antes de mostrar
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     if elementos:
         for elemento in elementos:
             linea = ", ".join(f"{k}: {v}" for k, v in vars(elemento).items())
             texto_resultado.insert(tk.END, linea + "\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron elementos en el archivo.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def buscar_elemento():
-    """Busca un elemento por nombre o número atómico y muestra su información
-    en el panel de texto y en los labels principales"""
+    """Busca un elemento por nombre, número atómico o nombre en español (con o sin acentos)
+    y muestra su información en el panel de texto y en los labels principales"""
     busqueda = entry_buscar.get().strip().lower()
     if not elementos:
         messagebox.askokcancel("Atención", "Primero debes leer los elementos.")
@@ -242,24 +265,58 @@ def buscar_elemento():
         return
 
     encontrado = None
+
+    # 1. Buscar por nombre en inglés o número atómico en la lista de elementos
     for elem8 in elementos:
         if elem8.element.lower() == busqueda or elem8.atomic_number == busqueda:
             encontrado = elem8
             break
+
+    # 2. Si no se encuentra, buscar en elementos_es.csv por nombre en español (con acentos)
+    numero_atomico_encontrado = None
+    if not encontrado:
+        for num_atomico, nombre_esp in elementos_es.items():
+            if nombre_esp.lower() == busqueda:
+                numero_atomico_encontrado = num_atomico
+                break
+
+    # 3. Si no se encuentra, buscar en elementos_es_sin_acentos por nombre sin acentos
+    if not encontrado and not numero_atomico_encontrado:
+        for num_atomico, nombre_es_sin_acentos in elementos_es_sin_acentos.items():
+            if nombre_es_sin_acentos.lower() == busqueda:
+                numero_atomico_encontrado = num_atomico
+                break
+
+    # Si se encuentra el número atómico, buscar el elemento en la lista principal
+    if not encontrado and numero_atomico_encontrado:
+        for elem8 in elementos:
+            if elem8.atomic_number == numero_atomico_encontrado:
+                encontrado = elem8
+                break
+
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     if encontrado:
         # Actualiza los labels
         label_z.config(text=f" {encontrado.atomic_number} ")
         label_nombre.config(text=f" {encontrado.element}")
         label_simbolo.config(text=f" {encontrado.symbol}")
+        # Mostrar nombre en español según número atómico
+        nombre_esp = elementos_es.get(str(encontrado.atomic_number), "Nombre en esp")
+        label_nombre_esp.config(text=nombre_esp)
+        print(encontrado.atomic_number, nombre_esp)
         mostrar_elemento_en_columnas_tab(encontrado)
     else:
         label_z.config(text="Z ")
-        label_nombre.config(text="Nombre: ")
-        label_simbolo.config(text="Símbolo: ")
-        texto_resultado.insert(tk.END, "Elemento no encontrado.")
+        label_nombre.config(text="Name ")
+        label_simbolo.config(text="Symbol")
+        label_nombre_esp.config(text="Nombre")
+        texto_resultado.insert(tk.END,
+                               "Elemento no encontrado. Intenta con otro nombre \no número"
+                               " atómico (del 1 al 118).")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def seleccionar_por_z(z):
@@ -288,6 +345,7 @@ def mostrar_metales():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     metales = [e for e in elementos if str(e.metal).strip().lower() == "yes"]
     # Cambiar color de los botones de metales
@@ -301,8 +359,10 @@ def mostrar_metales():
         for elem7 in metales:
             texto_resultado.insert(
                 tk.END, f"{elem7.atomic_number}: {elem7.element} ({elem7.symbol})\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron elementos metálicos.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def mostrar_gases():
@@ -313,6 +373,7 @@ def mostrar_gases():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     gases = [e for e in elementos if str(e.phase).strip().lower() == "gas"]
     # Cambiar color de los botones de gases
@@ -326,8 +387,10 @@ def mostrar_gases():
         for elem6 in gases:
             texto_resultado.insert(
                 tk.END, f"{elem6.atomic_number}: {elem6.element} ({elem6.symbol})\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron elementos en fase gas.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def mostrar_gases_nobles():
@@ -338,6 +401,7 @@ def mostrar_gases_nobles():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     gases_nobles = [e for e in elementos if str(e.type_).strip() == "Noble Gas"]
     # Cambiar color de los botones de gases nobles
@@ -351,8 +415,10 @@ def mostrar_gases_nobles():
         for elem5 in gases_nobles:
             texto_resultado.insert(
                 tk.END, f"{elem5.atomic_number}: {elem5.element} ({elem5.symbol})\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron gases nobles.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def mostrar_actinidos():
@@ -362,6 +428,7 @@ def mostrar_actinidos():
         messagebox.askokcancel("Atención", "Primero debes leer los elementos.")
         return
     texto_resultado.config(state="normal")
+    texto_alternativo.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
     texto_alternativo.delete(1.0, tk.END)
     actinidos = [e for e in elementos if str(e.type_).strip() == "Actinide"]
@@ -376,8 +443,10 @@ def mostrar_actinidos():
         for elem4 in actinidos:
             texto_resultado.insert(
                 tk.END, f"{elem4.atomic_number}: {elem4.element} ({elem4.symbol})\n")
+            texto_alternativo.delete(1.0, tk.END)
     else:
         texto_resultado.insert(tk.END, "No se encontraron actínidos.")
+        texto_alternativo.delete(1.0, tk.END)
     texto_resultado.config(state="disabled")
 
 def mostrar_lantanidos():
@@ -388,6 +457,7 @@ def mostrar_lantanidos():
         return
     texto_resultado.config(state="normal")
     texto_resultado.delete(1.0, tk.END)
+    texto_alternativo.config(state="normal")
     texto_alternativo.delete(1.0, tk.END)
     lantanidos = [e for e in elementos if str(e.type_).strip() == "Lanthanide"]
     # Cambiar color de los botones de lantánidos
@@ -934,9 +1004,13 @@ label_z = tk.Label(frame_labels, text=" ", font=("mistral", 20, "bold"), width=4
                    anchor="n", bg="#96ACC0", fg="#3F3F3F", relief="flat", bd=2)
 label_z.pack(side=tk.LEFT, padx=10, pady=5)
 
-label_nombre = tk.Label(frame_labels, text="Elemento ", font=("mistral", 20, "bold"),
+label_nombre = tk.Label(frame_labels, text="Element", font=("mistral", 20, "bold"),
                         width=20, anchor="n", bg="#96ACC0", fg="#3F3F3F", relief="flat", bd=2)
 label_nombre.pack(side=tk.LEFT, padx=10, pady=5)
+
+label_nombre_esp = tk.Label(frame_labels, text="Nombre", font=("mistral", 20, "bold"),
+                           width=20, anchor="n", bg="#96ACC0", fg="#3F3F3F", relief="flat", bd=2)
+label_nombre_esp.pack(side=tk.LEFT, padx=10, pady=5)
 
 label_simbolo = tk.Button(frame_labels, text=" ", font=("mistral", 20, "bold"), bg="#96ACC0",
                           fg="#3F3F3F", width=4, anchor="sw", relief="groove", bd=3,
