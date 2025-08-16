@@ -28,6 +28,22 @@ pinned_vars = {}
 # Palabras predeterminadas para los Checkbuttons
 DEFAULT_PINNED_WORDS = ["avi", "review", "errores", "xcut"]
 
+# Variables globales para almacenar datos de la propuesta
+datos_propuesta = {
+    "peso_original1": 0,
+    "peso_original2": 0,
+    "peso_propuesto1": 0,
+    "peso_propuesto2": 0,
+    "limite1": 0,
+    "limite2": 0,
+    # lista de tuples (nombre, peso_total) para mostrar barra por elemento
+    "duplicados_items1": [],  
+    "duplicados_items2": [],
+    "duplicados_sumados1": 0,
+    "duplicados_sumados2": 0,
+    "tiene_propuesta": False
+}
+
 def seleccionar_archivo1():
     """ Abre un cuadro de diálogo para seleccionar el primer archivo CSV """
     archivo = filedialog.askopenfilename(filetypes=[("Archivos CSV", "*.csv")])
@@ -320,6 +336,7 @@ def comprobar_integridad(originales1, originales2, propuesta1, propuesta2):
 def propuesta_reparto():
     """Calcula una propuesta de reparto óptimo de elementos entre ambos CSV.
     Para nombres repetidos se suma su peso (peso_csv1 + peso_csv2) y se asigna a un único CSV."""
+
     print(" ")
     archivo1 = getattr(label_archivo1, "archivo_path", "")
     archivo2 = getattr(label_archivo2, "archivo_path", "")
@@ -383,6 +400,12 @@ def propuesta_reparto():
     limite1 = total1 + extra1
     limite2 = total2 + extra2
 
+    # Almacenar datos originales
+    datos_propuesta["peso_original1"] = total1
+    datos_propuesta["peso_original2"] = total2
+    datos_propuesta["limite1"] = limite1
+    datos_propuesta["limite2"] = limite2
+
     # Encontrar duplicados
     nombres1 = set(originales1.keys())
     nombres2 = set(originales2.keys())
@@ -425,6 +448,10 @@ def propuesta_reparto():
     total_p1 = 0
     total_p2 = 0
     totales = 0
+    peso_duplicados_csv1 = 0
+    peso_duplicados_csv2 = 0
+    duplicados_items1 = []
+    duplicados_items2 = []
     for nombre in sorted(duplicados_movibles):
         p1 = originales1[nombre]
         total_p1 += p1
@@ -452,9 +479,13 @@ def propuesta_reparto():
         if destino == 1:
             propuesta1[nombre] = peso_total
             peso_actual1 += peso_total
+            peso_duplicados_csv1 += peso_total
+            duplicados_items1.append((nombre, peso_total))
         else:
             propuesta2[nombre] = peso_total
             peso_actual2 += peso_total
+            peso_duplicados_csv2 += peso_total
+            duplicados_items2.append((nombre, peso_total))
 
     print("Peso total duplicados CSV1:", total_p1)
     print("Peso total duplicados CSV2:", total_p2)
@@ -478,6 +509,11 @@ def propuesta_reparto():
                     peso_actual2 += peso_total
                     asignacion_duplicados[nombre] = (peso_total, 2)
                     elementos_movidos.append((nombre, "1->2"))
+                    peso_duplicados_csv1 -= peso_total
+                    peso_duplicados_csv2 += peso_total
+                    # mover item de lista 1 -> 2
+                    duplicados_items1 = [it for it in duplicados_items1 if it[0] != nombre]
+                    duplicados_items2.append((nombre, peso_total))
             elif destino_actual == 2 and peso_actual2 > limite2:
                 if (peso_actual1 + peso_total) <= limite1 or (
                     (peso_actual2 - peso_total) - limite2 >
@@ -489,36 +525,22 @@ def propuesta_reparto():
                     peso_actual1 += peso_total
                     asignacion_duplicados[nombre] = (peso_total, 1)
                     elementos_movidos.append((nombre, "2->1"))
-
-    # Segunda fase: mover elementos únicos si persiste exceso (EXCLUYENDO FIJADOS)
-    if peso_actual1 > limite1:
-        candidatos = [(n, p) for n, p in propuesta1.items()
-                      if n not in asignacion_duplicados and n not in fijados_activos]
-        candidatos.sort(key=lambda x: -x[1])
-        for nombre, p in candidatos:
-            if peso_actual1 <= limite1:
-                break
-            if (peso_actual2 + p) <= limite2:
-                del propuesta1[nombre]
-                propuesta2[nombre] = p
-                peso_actual1 -= p
-                peso_actual2 += p
-                elementos_movidos.append((nombre, "1->2"))
-    if peso_actual2 > limite2:
-        candidatos = [(n, p) for n, p in propuesta2.items()
-                      if n not in asignacion_duplicados and n not in fijados_activos]
-        candidatos.sort(key=lambda x: -x[1])
-        for nombre, p in candidatos:
-            if peso_actual2 <= limite2:
-                break
-            if (peso_actual1 + p) <= limite1:
-                del propuesta2[nombre]
-                propuesta1[nombre] = p
-                peso_actual2 -= p
-                peso_actual1 += p
-                elementos_movidos.append((nombre, "2->1"))
+                    peso_duplicados_csv2 -= peso_total
+                    peso_duplicados_csv1 += peso_total
+                    # mover item de lista 2 -> 1
+                    duplicados_items2 = [it for it in duplicados_items2 if it[0] != nombre]
+                    duplicados_items1.append((nombre, peso_total))
 
     es_valido = (peso_actual1 <= limite1 and peso_actual2 <= limite2)
+
+    # Almacenar datos de la propuesta
+    datos_propuesta["peso_propuesto1"] = peso_actual1
+    datos_propuesta["peso_propuesto2"] = peso_actual2
+    datos_propuesta["duplicados_sumados1"] = peso_duplicados_csv1
+    datos_propuesta["duplicados_sumados2"] = peso_duplicados_csv2
+    datos_propuesta["duplicados_items1"] = duplicados_items1
+    datos_propuesta["duplicados_items2"] = duplicados_items2
+    datos_propuesta["tiene_propuesta"] = True
 
     # Salida
     comprobar_integridad(originales1, originales2, propuesta1, propuesta2)
@@ -566,6 +588,87 @@ def propuesta_reparto():
     else:
         resultado_texto.insert(tk.END, "\n✓ No se requieren movimientos.\n")
 
+
+def graficar_propuesta():
+    """Genera una gráfica comparativa mostrando los pesos antes y después de la propuesta."""
+    if not datos_propuesta["tiene_propuesta"]:
+        messagebox.showwarning("Sin propuesta", "Primero debes ejecutar una propuesta de reparto.")
+        return
+
+    try:
+        categorias = ['CSV 1', 'CSV 2']
+        pesos_originales = [datos_propuesta["peso_original1"], datos_propuesta["peso_original2"]]
+        pesos_propuestos = [datos_propuesta["peso_propuesto1"], datos_propuesta["peso_propuesto2"]]
+        items1 = datos_propuesta.get("duplicados_items1", [])
+        items2 = datos_propuesta.get("duplicados_items2", [])
+
+        x = np.arange(len(categorias))
+        width = 0.3
+
+        #plt.clf()
+        _, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+
+        # Primera gráfica: Original vs Propuesta
+        bars1 = ax1.bar(x - width/2, pesos_originales, width, label='Original',
+                        color='lightcoral', alpha=0.8)
+        bars2 = ax1.bar(x + width/2, pesos_propuestos, width, label='Propuesta',
+                        color='skyblue', alpha=0.8)
+
+        ax1.set_xlabel('Archivos CSV')
+        ax1.set_ylabel('Peso (Gb)')
+        ax1.set_title('Comparación: Original vs Propuesta')
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(categorias)
+        ax1.legend()
+
+        # Añadir valores en las barras
+        for bar1, valor in zip(bars1, pesos_originales):
+            height = bar1.get_height()
+            ax1.text(bar1.get_x() + bar1.get_width()/2., height + 0.5,
+                    f'{valor:.1f}', ha='center', va='bottom', fontsize=9)
+
+        for bar2, valor in zip(bars2, pesos_propuestos):
+            height = bar2.get_height()
+            ax1.text(bar2.get_x() + bar2.get_width()/2., height + 0.5,
+                    f'{valor:.1f}', ha='center', va='bottom', fontsize=9)
+
+        # Segunda gráfica: barra por elemento duplicado sumado en CSV1
+        if items1:
+            names1, weights1 = zip(*items1)
+            y1 = np.arange(len(names1))
+            ax2.barh(y1, weights1, color='orange', alpha=0.85)
+            ax2.set_yticks(y1)
+            ax2.set_yticklabels(names1)
+            ax2.set_xlabel('Peso (Gb)')
+            ax2.set_title('Duplicados sumados en CSV1 [por elemento]')
+            for i, v in enumerate(weights1):
+                ax2.text(v + max(weights1) * 0.01, i, f'{v:.1f}', va='center', fontsize=9)
+        else:
+            ax2.text(0.5, 0.5, "No hay elementos [DUP SUM] en CSV1", ha='center', va='center')
+            ax2.set_axis_off()
+
+        # Tercera gráfica: barra por elemento duplicado sumado en CSV2
+        if items2:
+            names2, weights2 = zip(*items2)
+            y2 = np.arange(len(names2))
+            ax3.barh(y2, weights2, color='green', alpha=0.85)
+            ax3.set_yticks(y2)
+            ax3.set_yticklabels(names2)
+            ax3.set_xlabel('Peso (Gb)')
+            ax3.set_title('Duplicados sumados en CSV2 [por elemento]')
+            for i, v in enumerate(weights2):
+                ax3.text(v + max(weights2) * 0.01, i, f'{v:.1f}', va='center', fontsize=9)
+        else:
+            ax3.text(0.5, 0.5, "No hay elementos [DUP SUM] en CSV2", ha='center', va='center')
+            ax3.set_axis_off()
+
+        plt.tight_layout()
+        plt.show()
+
+    except (KeyError, TypeError, ValueError, RuntimeError) as e:
+        # Capturar errores esperables en los datos o en la generación de la figura,
+        # evitando atrapar excepciones demasiado generales.
+        messagebox.showerror("Error", f"No se pudo generar la gráfica:\n{e}")
 
 root = tk.Tk()
 root.title("Comparador de Archivos CSV")
@@ -638,6 +741,10 @@ btn_propuesta.pack(pady=10, side="left")
 btn_grafica_repetidos = tk.Button(frame_middle, text=" ///\tGráfica",
                                   command=graficar_repetidos, width=20, bg=WIDGET_BG, fg=FG_COLOR)
 btn_grafica_repetidos.pack(pady=5, side="left", padx=5)
+
+btn_grafica_propuesta = tk.Button(frame_middle, text="Gráfica Propuesta",
+                                  command=graficar_propuesta, width=20, bg=WIDGET_BG, fg=TEXT_FG)
+btn_grafica_propuesta.pack(pady=5, side="left", padx=5)
 
 # Marco inferior para palabras fijadas y panel de resultados
 frame_bottom = tk.Frame(root, bg=DARK_BG)
