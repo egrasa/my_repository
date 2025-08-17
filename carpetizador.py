@@ -5,8 +5,13 @@ from tkinter import messagebox
 from tkinter import ttk
 import os
 import csv
+#from collections import deque
+from history_tracker import log_file_creation
+from history_visualizer import HistoryViewer
 
-VERSION = 1.1
+ENCODINGS = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+
+VERSION = 1.3
 
 lista_carpetizados = []
 lista_eventos = []
@@ -96,40 +101,76 @@ def seleccionar_carpeta():
         actualizar_estado_boton_crear()
         if "Elements14Tb_old" in nombre_carpeta:
             boton_old.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements14Tb_old")
         elif "Elements14Tb_new" in nombre_carpeta:
             boton_new.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements14Tb_new")
         elif "Elements14Tb_last" in nombre_carpeta:
             boton_last.config(state='normal', bg='lightgreen', fg='blue')
-        elif "SeagateDesktop8Tb" in nombre_carpeta:
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements14Tb_last")
+        elif "Seagate8Tb_Desktop" in nombre_carpeta:
             boton_seagate.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Seagate8Tb_Desktop")
         elif "UnionSine14Tb" in nombre_carpeta:
             boton_unionsine14.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "UnionSine14Tb")
         elif "Elements5Tb_Beta" in nombre_carpeta:
             boton_beta5tb.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements5Tb_Beta")
         elif "Elements4Tb_Alpha" in nombre_carpeta:
             boton_alpha4tb.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements4Tb_Alpha")
         elif "MyPassport2018" in nombre_carpeta:
             boton_mpass2018.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "MyPassport2018")
         elif "Easystore8Tb" in nombre_carpeta:
             boton_easystore.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Easystore8Tb")
         elif "Elements12Tb" in nombre_carpeta:
             boton_elem12.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements12Tb")
         elif "Elements4Tb_newSE" in nombre_carpeta:
             boton_newse.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements4Tb_newSE")
         elif "Elements2Tb_Base1" in nombre_carpeta:
             boton_base1.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements2Tb_Base1")
         elif "MyPassport2Tb_azul" in nombre_carpeta:
             boton_mpassazul.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "MyPassport2Tb_azul")
         elif "MyPassport4Tb_blanco" in nombre_carpeta:
             boton_mpassblanco.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "MyPassport4Tb_blanco")
         elif "UnionSine10Tb" in nombre_carpeta:
             boton_unionsine10.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "UnionSine10Tb")
         elif "MyPassport2Tb_red" in nombre_carpeta:
             boton_mpassrojo.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "MyPassport2Tb_red")
         elif "Elements4Tb_SEcret" in nombre_carpeta:
             boton_secret.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Elements4Tb_SEcret")
         elif "Seagate10Tb_Expansion" in nombre_carpeta:
             boton_expansion.config(state='normal', bg='lightgreen', fg='blue')
+            entrada_nombre.delete(0, tk.END)
+            entrada_nombre.insert(0, "Seagate10Tb_Expansion")
         else:
             print("Carpeta no reconocida")
     else:
@@ -140,14 +181,33 @@ def seleccionar_carpeta():
     progress.config(style="gray.Horizontal.TProgressbar")
     label_estado.config(text="")
 
+def salir_app():
+    """ fn salir de la app """
+    # Cerrar todas las ventanas hijas si existen
+    for w in ventana.winfo_children():
+        if isinstance(w, tk.Toplevel):
+            try:
+                w.destroy()
+            except (tk.TclError, RuntimeError):
+                # Exception ignored intentionally; consider adding logging if needed for debugging.
+                pass
+    try:
+        ventana.quit()  # Detener el mainloop si está corriendo
+        ventana.destroy()
+    except (tk.TclError, RuntimeError, OSError):
+        # Exception ignored intentionally; consider adding logging if needed for debugging.
+        pass
+
 def crear_archivo():
     """ fn crear archivo txt y csv """
     nombre_archivo = entrada_nombre.get()
     carpeta = label_carpeta.cget("text")
+    print(carpeta)
     carpeta2 = "C:/Users/Usuario/OneDrive/Escritorio/info_discos duros"
 
     if nombre_archivo and carpeta:
         dirs_total = sum(len(dirs) for _, dirs, _ in os.walk(carpeta))
+        files_total = sum(len(files) for _, _, files in os.walk(carpeta))
         progress['maximum'] = dirs_total if dirs_total > 0 else 1
         progress['value'] = 0
         progress.config(style="green.Horizontal.TProgressbar")
@@ -157,6 +217,9 @@ def crear_archivo():
         ruta_txt2 = os.path.join(carpeta2, f"{nombre_archivo}.txt")
         ruta_csv = os.path.join(carpeta, f"{nombre_archivo}.csv")
         ruta_csv2 = os.path.join(carpeta2, f"{nombre_archivo}.csv")
+
+        total_size_gb = 0
+        file_count = 0
 
         with open(ruta_txt, 'w', encoding='utf-8') as archivo_txt, \
              open(ruta_csv, 'w', newline='', encoding='utf-8') as archivo_csv:
@@ -172,15 +235,16 @@ def crear_archivo():
                                for f in os.listdir(dir_path)
                                if os.path.isfile(os.path.join(dir_path, f)))
                     size_gb = size / (1024 ** 3)
+                    total_size_gb += size_gb
                     archivo_txt.write(f"{diri}: {size_gb:.2f} GB\n")
                     csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1]])
                     count += 1
+                    file_count += 1
                     progress['value'] = count
                     porcentaje = int((count / progress['maximum']) * 100)
                     label_estado.config(text=f"Procesando... {porcentaje}%")
                     ventana.update_idletasks()
 
-        # Repite el mismo proceso para el segundo archivo
         with open(ruta_txt2, 'w', encoding='utf-8') as archivo_txt, \
              open(ruta_csv2, 'w', newline='', encoding='utf-8') as archivo_csv:
 
@@ -207,6 +271,19 @@ def crear_archivo():
         label_estado.config(text="¡Procesamiento finalizado!")
         ventana.update_idletasks()
 
+        # Registrar en el historial
+        log_file_creation(
+            nombre_archivo,
+            file_count,
+            total_size_gb,
+            carpeta,
+            ruta_completa=carpeta,
+            carpetas_procesadas=dirs_total,
+            archivos_procesados=files_total
+        )
+
+        boton_mostrar.config(state='normal')
+
 def dar_nombre(nombre):
     """ fn dar nombre """
     #print(nombre)
@@ -215,129 +292,183 @@ def dar_nombre(nombre):
     crear_archivo()
 
 def nombre_old():
-    """ fn nombre old """
+    """ fn nombre Elements14Tb_old """
     nombre_archivo = "Elements14Tb_old"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_old.config(state='disabled', bg='lightgray')
 
 def nombre_new():
-    """ fn nombre new """
+    """ fn nombre Elements14Tb_new """
     nombre_archivo = "Elements14Tb_new"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_new.config(state='disabled', bg='lightgray')
 
 def nombre_last():
-    """ fn nombre last """
+    """ fn nombre Elements14Tb_last """
     nombre_archivo = "Elements14Tb_last"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_last.config(state='disabled', bg='lightgray')
 
 def nombre_seagate():
-    """ fn nombre seagate """
-    nombre_archivo = "SeagateDesktop8Tb"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    """ fn nombre Seagate8Tb_Desktop """
+    nombre_archivo = "Seagate8Tb_Desktop"
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_seagate.config(state='disabled', bg='lightgray')
 
 def nombre_unionsine14():
-    """ fn nombre unionsine14 """
+    """ fn nombre UnionSine14Tb """
     nombre_archivo = "UnionSine14Tb"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_unionsine14.config(state='disabled', bg='lightgray')
 
 def nombre_beta5tb():
-    """ fn nombre beta5tb """
+    """ fn nombre Elements5Tb_Beta """
     nombre_archivo = "Elements5Tb_Beta"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_beta5tb.config(state='disabled', bg='lightgray')
 
 def nombre_alpha4tb():
-    """ fn nombre alpha4tb """
+    """ fn nombre Elements4Tb_Alpha """
     nombre_archivo = "Elements4Tb_Alpha"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_alpha4tb.config(state='disabled', bg='lightgray')
 
 def nombre_mpass2018():
-    """ fn nombre mpass2018 """
+    """ fn nombre MyPassport2018 """
     nombre_archivo = "MyPassport2018"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_mpass2018.config(state='disabled', bg='lightgray')
 
 def nombre_easystore():
-    """ fn nombre easystore """
+    """ fn nombre Easystore8Tb """
     nombre_archivo = "Easystore8Tb"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_easystore.config(state='disabled', bg='lightgray')
 
 def nombre_elem12():
-    """ fn nombre elem12 """
+    """ fn nombre Elements12Tb """
     nombre_archivo = "Elements12Tb"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_elem12.config(state='disabled', bg='lightgray')
 
 def nombre_newse():
-    """ fn nombre newse """
+    """ fn nombre Elements4Tb_newSE """
     nombre_archivo = "Elements4Tb_newSE"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_newse.config(state='disabled', bg='lightgray')
 
 def nombre_secret():
-    """ fn nombre secret """
+    """ fn nombre Elements4Tb_SEcret """
     nombre_archivo = "Elements4Tb_SEcret"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_secret.config(state='disabled', bg='lightgray')
 
 def nombre_base1():
-    """ fn nombre base1 """
+    """ fn nombre Elements2Tb_base1 """
     nombre_archivo = "Elements2Tb_base1"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_base1.config(state='disabled', bg='lightgray')
 
 def nombre_mpassazul():
-    """ fn nombre mpassazul """
+    """ fn nombre MyPassport2Tb_azul """
     nombre_archivo = "MyPassport2Tb_azul"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_mpassazul.config(state='disabled', bg='lightgray')
 
 def nombre_mpassblanco():
-    """ fn nombre mpassblanco """
+    """ fn nombre MyPassport4Tb_blanco """
     nombre_archivo = "MyPassport4Tb_blanco"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_mpassblanco.config(state='disabled', bg='lightgray')
 
 def nombre_unionsine10():
-    """ fn nombre unionsine10 """
+    """ fn nombre UnionSine10Tb """
     nombre_archivo = "UnionSine10Tb"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_unionsine10.config(state='disabled', bg='lightgray')
 
 def nombre_mpassrojo():
-    """ fn nombre mpassrojo """
+    """ fn nombre MyPassport2Tb_red """
     nombre_archivo = "MyPassport2Tb_red"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_mpassrojo.config(state='disabled', bg='lightgray')
 
 def nombre_expansion():
-    """ fn nombre expansion """
+    """ fn nombre Seagate10Tb_Expansion """
     nombre_archivo = "Seagate10Tb_Expansion"
-    dar_nombre(nombre_archivo)
-    lista_carpetizados.append(nombre_archivo)
+    if nombre_archivo not in lista_carpetizados:
+        lista_carpetizados.append(nombre_archivo)
+        dar_nombre(nombre_archivo)
+    else:
+        messagebox.showinfo("Información", "El nombre ya ha sido utilizado.")
     boton_expansion.config(state='disabled', bg='lightgray')
 
 def mostrar_archivos():
@@ -350,6 +481,46 @@ def mostrar_archivos():
     else:
         messagebox.askokcancel("Archivos Creados", "No se han creado archivos aún.")
 
+def mostrar_ayuda():
+    """Muestra una ventana emergente con la ayuda de la aplicación."""
+    mensaje = (
+        "Gestor de Archivos - Ayuda\n\n"
+        "Esta aplicación crea archivos txt y csv a partir de una carpeta seleccionada."
+        "\nEstos archivos txt y csv contienen información sobre los archivos y carpetas "
+        "dentro de la carpeta seleccionada.\n\n -- Instrucciones --\n"
+        "1. Selecciona una carpeta con el botón 'Seleccionar Carpeta'.\n"
+        "2. Una vez seleccionada la carpeta, se habilitará el botón con el nombre sugerido "
+        "para ese archivo.\n"
+        "3. Pulsa ese botón para generar los archivos txt y csv.\n"
+        "4. En acaso de querer otro nombre para el archivo, o no activarse ningun botón, "
+        "edita el campo de texto y pulsa 'Crear Archivo'.\n"
+        "5. Los botones de nombres rápidos se activan según la carpeta seleccionada.\n"
+        "\n"
+        "En la barra de progreso puedes ver el avance del procesamiento.\n"
+    )
+    # Mostrar el mensaje de ayuda al usuario
+    messagebox.showinfo("Ayuda - Gestor de Archivos", mensaje)
+
+def mostrar_historial():
+    """
+    Muestra el historial de archivos creados. 
+    Si el módulo 'history_visualizer' está disponible,
+    se utiliza para mostrar una ventana avanzada con el historial.
+    Si no está disponible, se muestra un resumen simple de los archivos creados en la sesión actual.
+    """
+    try:
+        history_viewer = HistoryViewer(ventana)
+        history_viewer.show_history_window()
+    except ImportError:
+        if lista_carpetizados:
+            archivos = "\n".join(lista_carpetizados)
+            messagebox.showinfo("Historial (sesión)",
+                                f"Archivos creados en esta sesión:\n\n{archivos}")
+        else:
+            messagebox.showinfo("Historial",
+                                "No hay historial disponible.\n\nEsto significa que no se han"
+                                " creado archivos en esta sesión.")
+
 # Crear la ventana principal
 ventana = tk.Tk()
 ventana.title("Gestor de Archivos")
@@ -361,11 +532,19 @@ style.theme_use('default')
 style.configure("gray.Horizontal.TProgressbar", troughcolor='lightgray', background='lightgray')
 style.configure("green.Horizontal.TProgressbar", troughcolor='lightgray', background='green')
 
+frame_top = tk.Frame(ventana, bg='lightgray')
+frame_top.pack(pady=10)
+
 # Botón para seleccionar carpeta
-boton_seleccionar = tk.Button(ventana, text="Seleccionar Carpeta", width=30, fg='blue',
-                              height=3, bg='lightblue', command=seleccionar_carpeta,
+boton_seleccionar = tk.Button(frame_top, text="📂 Seleccionar Carpeta", width=30, fg='blue',
+                              height=2, bg='lightblue', command=seleccionar_carpeta,
                               relief='groove')
-boton_seleccionar.pack(pady=5)
+boton_seleccionar.pack(pady=2, side='left')
+
+# Botón para salir de la aplicación
+boton_salir = tk.Button(frame_top, text="❌ Salir", width=10, bg='lightblue', fg='darkblue',
+                        command=salir_app, relief='groove', height=2)
+boton_salir.pack(pady=2, side='left')
 
 # frames
 frame_opciones = tk.Frame(ventana, bg='lightgray')
@@ -379,6 +558,9 @@ frame_barra.pack(padx=25, pady=10, expand=True, fill='x')
 
 frame_lower = tk.Frame(ventana, bg='darkred', height=2)
 frame_lower.pack(pady=0, fill='x', expand=True)
+
+frame_help = tk.Frame(ventana, bg='lightgray')
+frame_help.pack(pady=0, fill='both', expand=True)
 
 # Label para mostrar la carpeta seleccionada
 label_carpeta = tk.Label(frame_barra, text="No se ha seleccionado ninguna carpeta",
@@ -397,6 +579,11 @@ boton_crear = tk.Button(frame_opciones, text="Crear Archivo", height=2, width=10
                         command=crear_archivo, state='disabled', borderwidth=0)
 boton_crear.pack(padx=2, pady=5, side='left')
 
+boton_ayuda = tk.Button(frame_help, text="❓ Ayuda", command=mostrar_ayuda,
+                        bg="#8BC7A9", fg='black', relief='groove')
+boton_ayuda.pack(padx=5, pady=5, anchor='ne', side='right')
+ToolTip(boton_ayuda, "Muestra información de ayuda sobre el uso de la aplicación")
+
 # Botones para seleccionar nombres
 boton_old = tk.Button(frame_botones, text="Elements14Tb_old", width=20, command=nombre_old,
                       state='disabled', bg='lightgray')
@@ -410,8 +597,8 @@ boton_last = tk.Button(frame_botones, text="Elements14Tb_last", width=20, comman
                        state='disabled', bg='lightgray')
 boton_last.grid(pady=0, row=0, column=2)
 
-boton_seagate = tk.Button(frame_botones, text="SeagateDesktop8Tb", width=20, command=nombre_seagate,
-                          state='disabled', bg='lightgray')
+boton_seagate = tk.Button(frame_botones, text="Seagate8Tb_Desktop", width=20,
+                          command=nombre_seagate, state='disabled', bg='lightgray')
 boton_seagate.grid(pady=0, row=1, column=0)
 
 boton_unionsine14 = tk.Button(frame_botones, text="UnionSine14Tb", width=20,
@@ -422,7 +609,7 @@ boton_beta5tb = tk.Button(frame_botones, text="Elements5Tb_Beta", width=20, comm
                           state='disabled', bg='lightgray')
 boton_beta5tb.grid(pady=0, row=1, column=2)
 
-boton_alpha4tb = tk.Button(frame_botones, text="ElementsAlpha4Tb", width=20,
+boton_alpha4tb = tk.Button(frame_botones, text="Elements4Tb_Alpha", width=20,
                            command=nombre_alpha4tb, state='disabled', bg='lightgray')
 boton_alpha4tb.grid(pady=0, row=2, column=0)
 
@@ -438,7 +625,7 @@ boton_elem12 = tk.Button(frame_botones, text="Elements12Tb", width=20, command=n
                          state='disabled', bg='lightgray')
 boton_elem12.grid(pady=0, row=3, column=0)
 
-boton_newse = tk.Button(frame_botones, text="Elements_newSE", width=20, command=nombre_newse,
+boton_newse = tk.Button(frame_botones, text="Elements4Tb_newSE", width=20, command=nombre_newse,
                         state='disabled', bg='lightgray')
 boton_newse.grid(pady=0, row=3, column=1)
 
@@ -472,8 +659,13 @@ boton_expansion.grid(pady=0, row=5, column=2)
 
 # Botón para mostrar los archivos creados
 boton_mostrar = tk.Button(frame_opciones, text="Ver Creados", height=2, width=15,
-                          command=mostrar_archivos, state='normal', borderwidth=0, bg='lightgray')
+                          command=mostrar_archivos, state='disabled', borderwidth=0, bg='lightgray')
 boton_mostrar.pack(padx=2, pady=5, side='left')
+
+# Botón para mostrar el historial
+boton_historial = tk.Button(frame_opciones, text="📊 Historial", height=2, width=15,
+                           command=mostrar_historial, borderwidth=0, fg='green', bg='lightgray')
+boton_historial.pack(padx=2, pady=5, side='left')
 
 # Label para mostrar el estado
 label_estado = tk.Label(frame_barra, text="", font=("Arial", 8), bg='lightgray', fg='darkgreen')
@@ -481,12 +673,12 @@ label_estado = tk.Label(frame_barra, text="", font=("Arial", 8), bg='lightgray',
 # Barra de progreso desactivada al inicio
 progress = ttk.Progressbar(frame_barra, orient='horizontal', length=100, mode='determinate',
                            style="gray.Horizontal.TProgressbar", name="progressbar")
-progress.pack(padx=10, pady=0, side='right', fill='x', anchor='w')
-label_estado.pack(padx=5, pady=2, side='right', anchor='w')
+progress.pack(padx=5, pady=0, side='right', fill='x', anchor='w')
+label_estado.pack(padx=2, pady=2, side='right', anchor='w')
 
-label_version = tk.Label(ventana, text=f"Versión: {VERSION}", bg='lightgray', fg='darkgray',
+label_version = tk.Label(frame_help, text=f"Versión: {VERSION}", bg='lightgray', fg='darkred',
                         font=('new courier', 8))
-label_version.pack(padx=10, pady=5, side='bottom', anchor='e')
+label_version.pack(padx=10, pady=5, side='left', anchor='e')
 
 # Tooltip para botones
 ToolTip(boton_seleccionar, "Permite seleccionar la carpeta que quieras procesar")
@@ -495,8 +687,18 @@ ToolTip(boton_mostrar, "Permite ver los archivos creados en esta sesion")
 ToolTip(entrada_nombre, "Introduce el nombre del archivo que quieres crear")
 ToolTip(label_carpeta, "Carpeta seleccionada para procesar")
 ToolTip(progress, "Barra de progreso de creación de archivos")
-ToolTip(label_version, f"Versión actual del programa: {VERSION}")
+ToolTip(label_version, f"Versión actual: {VERSION}")
+ToolTip(boton_historial, "Muestra el historial de archivos creados y gráficos de evolución")
 
 # Iniciar el bucle principal de la interfaz
-ventana.mainloop()
-print(lista_eventos)
+try:
+    ventana.mainloop()
+except (tk.TclError, KeyboardInterrupt):
+    try:
+        if hasattr(ventana, "tk"):
+            if ventana.winfo_exists():
+                ventana.quit()
+                ventana.destroy()
+    except tk.TclError:
+        # Exception ignored intentionally; consider adding logging if needed for debugging.
+        pass
