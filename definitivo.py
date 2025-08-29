@@ -12,7 +12,7 @@ import subprocess
 import matplotlib.pyplot as plt
 import numpy as np
 
-VERSION = 1.0
+VERSION = 1.1
 
 class AgrupadorApp:
     """ Clase principal de la aplicación para agrupar nombres de archivos CSV """
@@ -27,18 +27,22 @@ class AgrupadorApp:
         color_frame = "#acafb9"      # Fondo de frames
         color_accent = "#8ce7e2"     # Botones activos
         color_button = "#bbc7d6"     # Botones normales
+        color_button2 = "#bae7d6"    # Botones secundarios
         color_text = "#1b1b4d"       # Texto principal
         color_entry_bg = "#c1dad1"  # Gris claro para cuando está activa
 
         # Fuente uniforme
         fuente = ("Segoe UI", 10)
+        fuente2 = ("Segoe UI", 12)
 
         # Aplica estilos generales
         style.configure(".", font=fuente, background=color_bg, foreground=color_text)
         style.configure("TFrame", background=color_frame)
         style.configure("TLabel", background=color_frame, foreground=color_text, font=fuente)
-        style.configure("TEntry", fieldbackground=color_bg, foreground=color_text, font=fuente)
+        style.configure("TEntry", fieldbackground=color_bg, foreground=color_text, font=fuente2)
         style.configure("TButton", background=color_button, foreground=color_text,
+                        font=fuente, padding=6)
+        style.configure("alternative.TButton", background=color_button2, foreground=color_text,
                         font=fuente, padding=6)
         style.configure("TLabelframe", background=color_frame, foreground=color_text,
                         font=("Segoe UI", 10, "bold"))
@@ -47,7 +51,7 @@ class AgrupadorApp:
         style.configure("Custom.TCheckbutton",
             background=color_frame,
             foreground=color_text,
-            font=fuente)
+            font=fuente2)
         style.map("TEntry", fieldbackground=[("disabled", color_bg), ("focus", color_entry_bg)],
                   foreground=[("focus", color_text)])
         style.map("TButton", background=[("active", color_accent), ("disabled", color_frame)])
@@ -63,17 +67,21 @@ class AgrupadorApp:
         self.porcentaje_labels = {}
         self.nombres_descartar_vars = {}
 
+        # Inicializar atributos usados fuera de __init__
+        self._nombre_radar = None
+        self._archivos_radar = []
+
         # Nombres a descartar (pueden ser activados por el usuario)
         self.models = ['dinstar', 'adel1n', 'miadevil', 'emiliaaa', 'dinstar_sp',
                        'dinstar_process', 'dinstar_original', 'dinstar_downloads',
-                       'adel1n_sp', 'emiliaaa_sp', 'miadevil_sp', 'Mia_']
+                       'adel1n_sp', 'adel1n_original', 'emiliaaa_sp', 'miadevil_sp', 'Mia_']
         self.assort = ['forcut', 'review', 'variety', 'errores', 'avi_original', 'xcut']
         self.video_formats = ['avi', 'mp4', 'mkv', 'flv', 'mov', 'wmv']
         # Diccionario para agrupar los nombres a descartar por grupo
         self.nombres_descartar_grupos = {
-            "Sp_Models": self.models,
-            "Assort": self.assort,
-            "VideoFormats": self.video_formats
+            "Sp_Models": sorted(self.models),
+            "Assort": sorted(self.assort),
+            "VideoFormats": sorted(self.video_formats)
         }
 
         # Frame principal horizontal
@@ -82,13 +90,7 @@ class AgrupadorApp:
 
         # Frame izquierdo (selección de carpeta y archivos)
         frame_left = ttk.Frame(frame_main)
-        frame_left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-
-        # --- BOTÓN MOSTRAR/OCULTAR frame_right ---
-        self.frame_right_visible = False  # Estado de visibilidad
-        self.boton_toggle = ttk.Button(frame_left, text="Opciones avanzadas ▶",
-                                       command=self.toggle_frame_right, state="disabled")
-        self.boton_toggle.pack(pady=5, anchor="ne")
+        frame_left.pack(side="left", fill="both", expand=True, padx=10, pady=5)
 
         # Frame derecho para los checkbuttons de nombres a descartar, agrupados por grupo
         self.frame_right = ttk.LabelFrame(frame_main,
@@ -99,14 +101,17 @@ class AgrupadorApp:
         frame_dir = ttk.Frame(frame_left, padding=10)
         frame_dir.pack(fill="x")
         ttk.Label(frame_dir, text="Carpeta:").pack(side="left")
-        ttk.Entry(frame_dir, textvariable=self.directorio,
-                  state="disabled", width=70).pack(side="left", padx=5)
+        # mostrar la carpeta seleccionada como Label (ligado a la misma StringVar)
+        ttk.Label(frame_dir, textvariable=self.directorio, width=70,
+                  anchor="w").pack(side="left", padx=5)
         self.boton_v = ttk.Button(frame_dir, text="✅", width=4,
-                                  style="alternative.TButton",
+                                  style="TButton",
                    command=self.confirmar_carpeta)
-        self.boton_v.pack(side="left", padx=2)
-        ttk.Button(frame_dir, text="📂 Carpeta...",
-                   command=self.seleccionar_carpeta).pack(side="left")
+        #self.boton_v.pack(side="left", padx=2)
+
+        # Separador visual entre la sección de carpeta y las opciones de CSV
+        sep = ttk.Separator(frame_left, orient='horizontal')
+        sep.pack(fill='x', padx=8, pady=(4,6))
 
         frame_csv_select = ttk.Frame(frame_left)
         frame_csv_select.pack(fill="x", pady=(0, 5))
@@ -118,32 +123,44 @@ class AgrupadorApp:
         self.frame_checks.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Botones seleccionar/deseleccionar todos los archivos CSV
-        self.boton_csv_todos = ttk.Button(frame_csv_boton, text="✔️", width=3,
-                   command=self.seleccionar_todos_csv, state="disabled")
+        self.boton_csv_todos = ttk.Button(frame_left, text="✔️",
+                                          width=3, style="alternative.TButton",
+                                          command=self.seleccionar_todos_csv,
+                                          state="disabled")
         self.boton_csv_todos.pack(side="left", padx=1)
-        self.boton_csv_ninguno = ttk.Button(frame_csv_boton, text="⬜", width=3,
-                   command=self.deseleccionar_todos_csv, state="disabled")
+        self.boton_csv_ninguno = ttk.Button(frame_left, text="⬜",
+                                            width=3, style="alternative.TButton",
+                                            command=self.deseleccionar_todos_csv,
+                                            state="disabled")
         self.boton_csv_ninguno.pack(side="left", padx=1)
 
         # Botón para generar TXT y gráficas
         self.boton_grafica = ttk.Button(frame_left, text="📊 Gráfica",
-                command=self.generar_todo, state="disabled")
-        self.boton_grafica.pack(pady=10, side="left")
+                                        width=15,
+                                        command=self.generar_todo,
+                                        state="disabled")
+        self.boton_grafica.pack(pady=5, side="left")
+
+        # Botón para buscar nombres con peso 0 en archivos activos
+        self.boton_vacias = ttk.Button(frame_left, text="🗂️ vacías",
+                                       width=15,
+                                       state="disabled",
+                                       command=self.buscar_nombres_peso_cero)
+        self.boton_vacias.pack(pady=5, side="left")
 
         # Botón para gráfica radar de pesos por nombre repetido
         self.boton_radar = ttk.Button(frame_left, text="📈 Radar pesos",
-                    command=self.graficar_radar_pesos, state="disabled")
-        self.boton_radar.pack(pady=10, side="left")
+                                      width=15,
+                                      command=self.graficar_radar_pesos,
+                                      state="disabled")
+        self.boton_radar.pack(pady=5, side="left")
 
         # Botón para abrir el archivo nombres_repetidos.txt
         self.boton_abrir_txt = ttk.Button(frame_left, text="📝 Abrir txt",
-                                        command=self.abrir_txt, state="disabled")
-        self.boton_abrir_txt.pack(pady=10, side="left")
-
-        # Botón para buscar nombres con peso 0 en archivos activos
-        self.boton_vacias = ttk.Button(frame_left, text="🗂️ Carpetas vacías", state="disabled",
-                command=self.buscar_nombres_peso_cero)
-        self.boton_vacias.pack(pady=10, side="left")
+                                          width=15,
+                                          command=self.abrir_txt,
+                                          state="disabled")
+        self.boton_abrir_txt.pack(pady=5, side="left")
 
         # Frame derecho para los checkbuttons de nombres a descartar, agrupados por grupo
         self.frame_right = ttk.LabelFrame(frame_main,
@@ -153,18 +170,25 @@ class AgrupadorApp:
         # Botones seleccionar/deseleccionar todos los nombres a descartar
         # (DENTRO de self.frame_right)
         frame_nombres_select = ttk.Frame(self.frame_right)
-        frame_nombres_select.pack(fill="x", pady=(0, 5))
-        self.boton_select_todos = ttk.Button(frame_nombres_select, text="✔️",
-                command=self.seleccionar_todos_nombres, state="disabled", width=3)
+        frame_nombres_select.pack(fill="both", pady=(0, 5), anchor="n")
+        self.boton_select_todos = ttk.Button(frame_nombres_select,
+                                             text="✔️",
+                                             style="alternative.TButton",
+                                             width=3,
+                                             command=self.seleccionar_todos_nombres,
+                                             state="disabled", )
         self.boton_select_todos.pack(side="left", padx=1)
-        self.boton_select_ninguno = ttk.Button(frame_nombres_select, text="⬜",
-                command=self.deseleccionar_todos_nombres, state="disabled", width=3)
+        self.boton_select_ninguno = ttk.Button(frame_nombres_select,
+                                               text="⬜",
+                                               style="alternative.TButton",
+                                               command=self.deseleccionar_todos_nombres,
+                                               state="disabled", width=3)
         self.boton_select_ninguno.pack(side="left", padx=1)
 
         # Crear los checkbuttons por grupo (DENTRO de self.frame_right)
         for grupo, nombres in self.nombres_descartar_grupos.items():
             grupo_frame = ttk.LabelFrame(self.frame_right, text=grupo, padding=5)
-            grupo_frame.pack(fill="x", padx=5, pady=5, side="left")
+            grupo_frame.pack(fill="both", padx=4, pady=4, side="left", anchor="n", expand=True)
             for nombre in nombres:
                 nombre_var = tk.BooleanVar(value=False)  # Por defecto desactivados
                 chk = ttk.Checkbutton(grupo_frame, text=nombre, variable=nombre_var,
@@ -176,17 +200,67 @@ class AgrupadorApp:
         frame_buscar_csv = ttk.Frame(frame_left)
         frame_buscar_csv.pack(fill="x", pady=(0, 5))
         self.label_buscar = ttk.Label(frame_csv_select, text="Buscar...")
-        self.entry_buscar_csv = ttk.Entry(frame_csv_select, width=40, state="disabled", style="TEntry")
-        self.boton_activar = ttk.Button(frame_csv_select, text="🔍 ejecutar", state="disabled",
-                   command=self.buscar_y_activar_csv)
-        self.boton_activar.pack(side="right", padx=10)
+        self.entry_buscar_csv = ttk.Entry(frame_csv_select, width=40,
+                                          state="disabled", style="TEntry")
+
+        # --- BOTÓN MOSTRAR/OCULTAR frame_right ---
+        self.frame_right_visible = False  # Estado de visibilidad
+        self.boton_toggle = ttk.Button(frame_csv_select, text="Opciones avanzadas ▶",
+                                       command=self.toggle_frame_right, state="disabled")
+        self.boton_toggle.pack(pady=5, padx=1, anchor="ne", side="right")
+
+        # Botón limpiar (nuevo)
+        self.boton_limpiar = ttk.Button(frame_csv_select, text="🧹", width=3, state="disabled",
+                                        command=lambda: self.entry_buscar_csv.delete(0, tk.END))
+        self.boton_limpiar.pack(side="right", padx=1)
+
+        self.boton_activar = ttk.Button(frame_csv_select, text="🔍 ver ///", state="disabled",
+                    command=self.buscar_y_activar_csv)
+        self.boton_activar.pack(side="right", padx=1)
         self.entry_buscar_csv.pack(side="right", padx=5)
-        self.label_buscar.pack(side="right", padx=5)
+        self.label_buscar.pack(side="right", padx=1)
 
         # Permitir activar con Enter
         self.entry_buscar_csv.bind("<Return>", lambda event: self.buscar_y_activar_csv())
-        self.label_peso = ttk.Label(frame_csv_boton, text="Peso total: 0.0 GB")
-        self.label_peso.pack(pady=5, padx=10, side="right")
+        self.label_peso = ttk.Label(frame_csv_select, text="Peso total: 0.0 GB")
+        self.label_peso.pack(pady=5, padx=10, side="left")
+
+        # Botón de ayuda y botón discreto para cambiar carpeta
+        self.boton_carpeta = ttk.Button(frame_left, text="📂", width=3,
+                                        command=self.seleccionar_carpeta)
+        self.boton_carpeta.pack(pady=10, side="right")
+        self.boton_ayuda = ttk.Button(frame_left, text="❓ Ayuda", command=self.mostrar_ayuda)
+        self.boton_ayuda.pack(pady=10, side="right")
+
+        # Cargar archivos CSV por defecto si la carpeta existe
+        if os.path.isdir(self.directorio.get()):
+            self.generar_checkbuttons()
+
+    def mostrar_ayuda(self):
+        """ Muestra un cuadro de diálogo con información sobre cómo usar la aplicación """
+        ayuda_texto = (
+            "Esta aplicación permite visualizar nombres de modelos contenidos en archivos CSV "
+            "y generar gráficos indicando en que unidades de disco se encuentran esas modelos.\n\n"
+            "Funciones principales:\n"
+            "1. ✅: Confirma la carpeta por defecto donde se encuentran los archivos CSV\n"
+            "2. 📂 Carpeta...: Permite seleccionar una carpeta con archivos "
+            "CSV diferente a la predeterminada.\n"
+            "3. Selecciona la unidad de disco: Marca las unidades de disco donde deseas buscar.\n"
+            "4. 🔍 ver ///: Permite buscar un nombre específico entre todos los archivos.\n"
+            "5. 📊 Gráfica: Genera gráficos indicando en que unidades de disco se encuentran "
+            "repetidos nombres de modelos.\n"
+            "6. 📈 Radar pesos: Muestra un gráfico tipo radar para un nombre específico que este "
+            "repetido en al menos 3 unidades de disco diferentes.\n"
+            "7. 📝 Abrir txt: Abre el archivo generado tras generar Gráfica con los nombres "
+            "repetidos.\n"
+            "8. 🗂️ Carpetas vacías: Busca carpetas vacías en los archivos seleccionados.\n"
+            "9. ❓ Ayuda: Muestra esta ventana de ayuda.\n\n"
+            "Nota: Usa los botones de selección para marcar o desmarcar todos los archivos "
+            "o nombres.\n"
+            "Puedes configurar mejor la búsqueda indicando nombres a descartar \n"
+            "en opciones avanzadas"
+        )
+        messagebox.askokcancel("Ayuda - Agrupador de Nombres CSV", ayuda_texto)
 
     def buscar_nombres_peso_cero(self):
         """Busca en los archivos CSV activos todos los nombres 
@@ -234,73 +308,92 @@ class AgrupadorApp:
         """ Alterna la visibilidad del frame derecho """
         if self.frame_right_visible:
             self.frame_right.pack_forget()
-            self.boton_toggle.config(text="Mostrar opciones avanzadas ▶")
+            self.boton_toggle.config(text="Mostrar avanzadas ▶")
             self.frame_right_visible = False
         else:
             self.frame_right.pack(side="right", fill="y", padx=5, pady=5)
-            self.boton_toggle.config(text="Ocultar opciones avanzadas ◀")
+            self.boton_toggle.config(text="Ocultar avanzadas ◀")
             self.frame_right_visible = True
 
     def buscar_y_activar_csv(self):
         """ Busca un archivo CSV por palabra y activa su checkbutton si lo encuentra """
+        self.deseleccionar_todos_csv()
         palabra = self.entry_buscar_csv.get().strip().lower()
         if not palabra:
-            intro_palabra = messagebox.askokcancel("Buscar archivo",
-                                                "Introduce una palabra para buscar.")
-            if intro_palabra:
-                print("Introduce una palabra para buscar...")
-                self.entry_buscar_csv.focus_set()
+            self._mostrar_mensaje_buscar_palabra()
             return
+
         carpeta = self.directorio.get()
         if not carpeta or not os.path.isdir(carpeta):
-            error_carpeta = messagebox.askokcancel("Error", "Esta carpeta no es válida.\n"
-                                                "quieres seleccionar otra?")
-            if error_carpeta:
-                print("Carpeta no válida, quizas seleccionando otra...")
-                self.seleccionar_carpeta()
+            self._manejar_carpeta_invalida()
             return
+
+        encontrado, suma_pesos_por_archivo, archivos_con_palabra = (
+            self._procesar_archivos_csv(palabra, carpeta))
+        self._actualizar_pesos_y_porcentajes(suma_pesos_por_archivo)
+        self._mostrar_resultados_busqueda(palabra, encontrado, archivos_con_palabra)
+
+    def _mostrar_mensaje_buscar_palabra(self):
+        """ Muestra un mensaje si no se introduce una palabra para buscar """
+        intro_palabra = messagebox.askokcancel("Buscar archivo",
+                                               "Introduce una palabra para buscar.")
+        if intro_palabra:
+            print("Introduce una palabra para buscar...")
+            self.entry_buscar_csv.focus_set()
+
+    def _manejar_carpeta_invalida(self):
+        """ Maneja el caso en que la carpeta seleccionada no es válida """
+        error_carpeta = messagebox.askokcancel("Error",
+                                               "Esta carpeta no es válida.\n¿Quieres "
+                                               "seleccionar otra?")
+        if error_carpeta:
+            print("Carpeta no válida, quizás seleccionando otra...")
+            self.seleccionar_carpeta()
+
+    def _procesar_archivos_csv(self, palabra, carpeta):
+        """ Procesa los archivos CSV para buscar la palabra y calcular pesos """
         encontrado = False
         suma_pesos_por_archivo = {}
-        lista_pesos = []
-        nombres_en_archivos = set()
         archivos_con_palabra = []
+        lista_pesos = []
 
         for archivo, var in self.check_vars.items():
             ruta = os.path.join(carpeta, archivo)
-            suma_peso = 0.0
-            try:
-                with open(ruta, newline="", encoding="utf-8") as f:
-                    reader = csv.reader(f)
-                    for fila in reader:
-                        if fila and fila[0]:
-                            nombres_en_archivos.add(fila[0].strip().lower())
-                        if fila and palabra == fila[0].strip().lower():
-                            var.set(True)
-                            encontrado = True
-                            archivos_con_palabra.append(archivo)
-                            try:
-                                peso = float(fila[1])
-                                suma_peso += peso + 0.01
-                            except (ValueError, TypeError):
-                                pass
-                    if suma_peso == 0:
-                        var.set(False)
-                    elif suma_peso == 0.01:
-                        respuesta = messagebox.askokcancel("Buscar archivo",
-                                            f"La palabra {palabra} existe en el archivo {archivo}"
-                                            ", pero parece no tener datos.\n"
-                                            " ¿Deseas activar el checkbutton?")
-                        if respuesta:
-                            var.set(True)
-                        else:
-                            var.set(False)
-                if suma_peso > 0.01:
-                    suma_pesos_por_archivo[archivo] = suma_peso
-                    lista_pesos.append(suma_peso)
-            except (OSError, IOError):
-                var.set(False)
+            suma_peso, archivo_encontrado = self._procesar_archivo_individual(ruta, palabra, var)
+            if archivo_encontrado:
+                encontrado = True
+                archivos_con_palabra.append(archivo)
+            if suma_peso > 0:
+                suma_pesos_por_archivo[archivo] = suma_peso
+                lista_pesos.append(suma_peso)
+
         total_peso = sum(lista_pesos)
         self.label_peso.config(text=f" Peso total:   {round(total_peso, 2)} GB  ")
+        return encontrado, suma_pesos_por_archivo, archivos_con_palabra
+
+    def _procesar_archivo_individual(self, ruta, palabra, var):
+        """ Procesa un archivo CSV individual para buscar la palabra y calcular su peso """
+        suma_peso = 0.0
+        archivo_encontrado = False
+        try:
+            with open(ruta, newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                for fila in reader:
+                    if fila and palabra == fila[0].strip().lower():
+                        var.set(True)
+                        archivo_encontrado = True
+                        try:
+                            peso = float(fila[1])
+                            suma_peso += peso + 0.01
+                        except (ValueError, TypeError):
+                            pass
+        except (OSError, IOError):
+            var.set(False)
+        return suma_peso, archivo_encontrado
+
+    def _actualizar_pesos_y_porcentajes(self, suma_pesos_por_archivo):
+        """ Actualiza los pesos y porcentajes en las etiquetas """
+        total_peso = sum(suma_pesos_por_archivo.values())
         for archivo, lbl in self.porcentaje_labels.items():
             if archivo in suma_pesos_por_archivo and total_peso > 0:
                 porcentaje = suma_pesos_por_archivo[archivo] * 100 / total_peso
@@ -309,37 +402,52 @@ class AgrupadorApp:
                 lbl.config(text="0.0%")
             else:
                 lbl.config(text="")
-        if suma_pesos_por_archivo:
-            print(' ')
-            for archivo, suma in suma_pesos_por_archivo.items():
-                print(f"'{palabra}' en {archivo.split('.')[0]}:  "
-                    f"{round(suma, 2)} GB -- {round(suma*100/total_peso, 1)} %")
-        if not encontrado:
-            similares = difflib.get_close_matches(palabra, nombres_en_archivos, n=10, cutoff=0.75)
-            if similares:
-                print(f"No se encontró '{palabra}'. "
-                    f"Palabras parecidas (>75%): {', '.join(similares)}")
-                parecida = messagebox.askokcancel("Buscar archivo",
-                                f"No se encontró ningún archivo CSV con '{palabra}\n'"
-                                f"quizas quisite decir [ {', '.join(similares)} ]")
-                if parecida:
-                    self.entry_buscar_csv.delete(0, tk.END)
-                    self.entry_buscar_csv.insert(0, similares[0])
-            else:
-                print(f"No se encontró '{palabra}' en ningún archivo CSV.")
-                messagebox.askokcancel("Buscar archivo",
-                                    f"No se encontró '{palabra}' en ningún archivo CSV."
-                                    " ni tampoco palabras parecidas.")
 
-        # --- Activar o desactivar el botón radar según condición ---
+    def _mostrar_resultados_busqueda(self, palabra, encontrado, archivos_con_palabra):
+        """ Muestra los resultados de la búsqueda en la consola y
+        actualiza el estado del botón radar """
+        if not encontrado:
+            self._sugerir_palabras_similares(palabra)
+        else:
+            print(f"'{palabra}' encontrado en los archivos: {', '.join(archivos_con_palabra)}")
+
         if len(set(archivos_con_palabra)) > 2:
             self.boton_radar.config(state="normal")
-            self._nombre_radar = palabra  # Guardar el nombre buscado para el radar
+            self._nombre_radar = palabra
             self._archivos_radar = list(set(archivos_con_palabra))
         else:
             self.boton_radar.config(state="disabled")
             self._nombre_radar = None
             self._archivos_radar = []
+
+    def _sugerir_palabras_similares(self, palabra):
+        """ Sugiere palabras similares si no se encuentra la palabra buscada """
+        nombres_en_archivos = set()
+        for archivo in self.check_vars:
+            ruta = os.path.join(self.directorio.get(), archivo)
+            try:
+                with open(ruta, newline="", encoding="utf-8") as f:
+                    reader = csv.reader(f)
+                    for fila in reader:
+                        if fila:
+                            nombre = fila[0].strip().lower()
+                            nombres_en_archivos.add(nombre)
+            except (OSError, IOError, csv.Error, UnicodeDecodeError):
+                continue
+        similares = difflib.get_close_matches(palabra, nombres_en_archivos, n=10, cutoff=0.75)
+        if similares:
+            print(f"No se encontró '{palabra}'. Palabras parecidas (>75%): {', '.join(similares)}")
+            parecida = messagebox.askokcancel("Buscar archivo",
+                                              f"No se encontró ningún archivo CSV con '{palabra}'\n"
+                                              f"¿Quizás quisiste decir [ {', '.join(similares)} ]?")
+            if parecida:
+                self.entry_buscar_csv.delete(0, tk.END)
+                self.entry_buscar_csv.insert(0, similares[0])
+        else:
+            print(f"No se encontró '{palabra}' en ningún archivo CSV.")
+            messagebox.askokcancel("Buscar archivo",
+                                   f"No se encontró '{palabra}' en ningún archivo CSV "
+                                   "ni tampoco palabras parecidas.")
 
     def seleccionar_todos_csv(self):
         """ Selecciona todos los archivos CSV marcando sus checkbuttons """
@@ -376,15 +484,16 @@ class AgrupadorApp:
             widget.destroy()
         self.check_vars.clear()
         self.porcentaje_labels = {}  # Nuevo: guardar referencias a las etiquetas
-        self.boton_vacias.config(state="normal")  # Habilitar botón
-        self.boton_grafica.config(state="normal")  # Habilitar botón
-        self.boton_csv_todos.config(state="normal")  # Habilitar botón
-        self.boton_csv_ninguno.config(state="normal")  # Habilitar botón
-        self.boton_select_todos.config(state="normal")  # Habilitar botón
-        self.boton_select_ninguno.config(state="normal")  # Habilitar botón
-        self.entry_buscar_csv.config(state="normal")  # Habilitar entry
-        self.boton_activar.config(state="normal")  # Habilitar botón
-        self.boton_toggle.config(state="normal")  # Habilitar botón
+        self.boton_vacias.config(state="normal")
+        self.boton_grafica.config(state="normal")
+        self.boton_csv_todos.config(state="normal")
+        self.boton_csv_ninguno.config(state="normal")
+        self.boton_select_todos.config(state="normal")
+        self.boton_select_ninguno.config(state="normal")
+        self.entry_buscar_csv.config(state="normal")
+        self.boton_activar.config(state="normal")
+        self.boton_toggle.config(state="normal")
+        self.boton_limpiar.config(state="normal")
         carpeta = self.directorio.get()
         if not carpeta or not os.path.isdir(carpeta):
             messagebox.showerror("Error", "Selecciona una carpeta válida.")
