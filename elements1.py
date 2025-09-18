@@ -11,11 +11,12 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 VERSIONBASE = 1         # Versión base del programa (cambios importantes)
-VERSIONFUNCIONAL = 1.2  # Versión funcional (nuevas funcionalidades)
+VERSIONFUNCIONAL = 1.3  # Versión funcional (nuevas funcionalidades)
 VERSIONTABLA = 2    # Versión de la tabla periódica (cambios en la tabla)
 
-version_total = (VERSIONBASE,  VERSIONFUNCIONAL, VERSIONTABLA)
-print(f"Versión del programa: {version_total[0]}.{version_total[1]}.{version_total[2]}")
+version_total = (VERSIONBASE,  VERSIONFUNCIONAL, " ", VERSIONTABLA)
+print(f"Versión del programa: {version_total[0]}.{version_total[1]} _ {version_total[3]}")
+print(version_total)
 
 # --- Clase Tooltip ---
 class ToolTip:
@@ -483,7 +484,7 @@ def mostrar_radiactivos_fg_verde():
         if str(elem_r.radioactive).strip().lower() == "yes":
             z = str(elem_r.atomic_number)
             if z in botones_por_z:
-                botones_por_z[z].config(fg="#194B19")
+                botones_por_z[z].config(fg="#14F300")
         else:
             z = str(elem_r.atomic_number)
             if z in botones_por_z:
@@ -969,33 +970,44 @@ def mostrar_protones_igual_neutrones():
                                "y neutrones.")
     texto_resultado.config(state="disabled")
 
+COLOR_BASE = "#DBA5A5"  # Color base
+COLOR_B_GRAFICAS = "#B67C71"  # Color para el fondo de las gráficas
+COLOR_B_CHECKS = "#A06D6D"  # Color para el fondo de los checkbuttons
+COLOR_TOP_FRAME = "#494C50"  # Color para el fondo del frame superior
+
 root = tk.Tk()
 root.title("Tabla Periódica de los Elementos"
-           f" - v{version_total[0]}.{version_total[1]}.{version_total[2]}")
+           f" - v{version_total[0]}.{version_total[1]} / {version_total[3]}")
 root.geometry("1100x860")  # Ventana más grande
+root.config(bg=COLOR_BASE)  # Fondo oscuro
 
 tipo_grafica = tk.StringVar(value="barras")
 
 frame_top = tk.Frame(root)
 frame_top.pack(pady=5, expand=True, fill=tk.X)
-frame_top.config(bg="#494C50")  # Fondo oscuro
+frame_top.config(bg=COLOR_TOP_FRAME)  # Fondo oscuro
 
 # Añade estos labels después de crear frame_top y antes del Text
 frame_labels = tk.Frame(root)
 frame_labels.pack(pady=10, expand=True, fill=tk.X)
+frame_labels.config(bg=COLOR_BASE)  # Fondo oscuro
 
 # Crear un frame para los botones de los elementos
 frame_botones = tk.Frame(root)
 frame_botones.pack(pady=5)
+frame_botones.config(bg=COLOR_BASE)  # Fondo oscuro
 
 frame_graficas = tk.LabelFrame(root, text="Gráficas", font=("Arial", 12), borderwidth=0)
 frame_graficas.pack(pady=5, padx=15, expand=True, fill=tk.X)
+frame_graficas.config(bg=COLOR_BASE)  # Fondo oscuro
 
 frame_tipo_grafica = tk.Frame(frame_graficas)
 frame_tipo_grafica.pack(side="right", padx=10)
+frame_tipo_grafica.config(bg=COLOR_BASE)  # Fondo oscuro
 
 frame_checks = tk.Frame(root)
 frame_checks.pack(side="right", padx=10, pady=10, anchor="n")
+frame_checks.config(bg=COLOR_BASE)  # Fondo oscuro
 
 # Mejorar el aspecto visual de las etiquetas y botones en frame_labels
 frame_labels.config(bg="#96ACC0", padx=0, pady=0)  # Fondo oscuro y padding
@@ -1020,10 +1032,13 @@ label_simbolo.pack(side=tk.RIGHT, padx=10, pady=5)
 
 #tk.Label(frame_tipo_grafica, text="Tipo de gráfica:", font=("Arial", 10, "bold")).pack(anchor="w")
 tk.Radiobutton(frame_tipo_grafica, text="Barras", variable=tipo_grafica, value="barras",
+               bg=COLOR_BASE,
                font=("Arial", 10)).pack(anchor="w", side="left")
 tk.Radiobutton(frame_tipo_grafica, text="Líneas", variable=tipo_grafica, value="lineas",
+               bg=COLOR_BASE,
                font=("Arial", 10)).pack(anchor="w", side="left")
 tk.Radiobutton(frame_tipo_grafica, text="Radar", variable=tipo_grafica, value="radar",
+               bg=COLOR_BASE,
                font=("Arial", 10)).pack(anchor="w", side="left")
 
 #boton_leer = tk.Button(frame_top, text="Leer elementos", command=leer_elementos,
@@ -1056,11 +1071,11 @@ def desmarcar_todos():
     for v in vars_grafica.values():
         v.set(0)
 
-boton_marcar_todos = tk.Button(frame_checks, text="marcar todos", width=20, bg="lightgray",
+boton_marcar_todos = tk.Button(frame_checks, text="marcar todos", width=20, bg=COLOR_B_CHECKS,
                                command=marcar_todos, font=("Arial", 9), relief="groove")
 boton_marcar_todos.pack(side="top", pady=(0, 2), anchor="w")
 
-boton_desmarcar_todos = tk.Button(frame_checks, text="quitar todos", width=20, bg="lightgray",
+boton_desmarcar_todos = tk.Button(frame_checks, text="quitar todos", width=20, bg=COLOR_B_CHECKS,
                                   command=desmarcar_todos, font=("Arial", 9), relief="groove")
 boton_desmarcar_todos.pack(side="top", pady=(0, 2), anchor="w")
 
@@ -1069,48 +1084,49 @@ for texto, clave in parametros_grafica:
     chk = Checkbutton(frame_checks,
                       text=texto,
                       variable=var,
+                      bg=COLOR_BASE,
                       font=("Arial", 10),
                       anchor="w",
                       width=18)
     chk.pack(side="top", pady=0, anchor="w")  # De arriba a abajo
     vars_grafica[clave] = var
 
-entry_buscar = tk.Entry(frame_top, font=("Arial", 12), width=20, fg="#F0F0F0", bg="#494C50")
+entry_buscar = tk.Entry(frame_top, font=("Arial", 12), width=20, fg="#F0F0F0", bg=COLOR_TOP_FRAME)
 entry_buscar.pack(side=tk.LEFT, padx=5)
 entry_buscar.insert(0, "Hydrogen")  # Valor por defecto
 
 boton_buscar = tk.Button(frame_top, text="Buscar", command=buscar_elemento, borderwidth=0,
-                          font=("Arial", 10), bg="#494C50", fg="#F0F0F0")
+                          font=("Arial", 10), bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 entry_buscar.bind("<Return>", lambda event: buscar_elemento())
 boton_buscar.pack(side=tk.LEFT, padx=5)
 
-boton_busqueda_avanzada = tk.Button(frame_top, text="Búsqueda avanzada", bg="#494C50",
+boton_busqueda_avanzada = tk.Button(frame_top, text="Búsqueda avanzada", bg=COLOR_TOP_FRAME,
                                     fg="#F0F0F0", command=mostrar_busqueda_avanzada,
                                     font=("Arial", 10), borderwidth=0)
 boton_busqueda_avanzada.pack(side=tk.LEFT, padx=5)
 
 boton_atomo = tk.Button(frame_top, text="Átomo (Bohr)", command=representar_atomo,
-                        font=("Arial", 10), bg="#494C50", fg="#F0F0F0", borderwidth=0)
+                        font=("Arial", 10), bg=COLOR_TOP_FRAME, fg="#F0F0F0", borderwidth=0)
 boton_atomo.pack(side=tk.LEFT, padx=5)
 
 boton_metal = tk.Button(frame_top, text="Metal", borderwidth=0, command=mostrar_metales,
-                        font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
+                        font=("new courier", 8), bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 boton_metal.pack(side=tk.LEFT, padx=5)
 
 boton_gas = tk.Button(frame_top, text="Gas", borderwidth=0, command=mostrar_gases,
-                      font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
+                      font=("new courier", 8), bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 boton_gas.pack(side=tk.LEFT, padx=5)
 
 boton_gas_noble = tk.Button(frame_top, text="Gas Noble", borderwidth=0, font=("new courier", 8),
-                            command=mostrar_gases_nobles, bg="#494C50", fg="#F0F0F0")
+                            command=mostrar_gases_nobles, bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 boton_gas_noble.pack(side=tk.LEFT, padx=5)
 
 boton_lantanido = tk.Button(frame_top, text="Lantánido", borderwidth=0, command=mostrar_lantanidos,
-                            font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
+                            font=("new courier", 8), bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 boton_lantanido.pack(side=tk.LEFT, padx=5)
 
 boton_actinido = tk.Button(frame_top, text="Actínido", borderwidth=0, command=mostrar_actinidos,
-                           font=("new courier", 8), bg="#494C50", fg="#F0F0F0")
+                           font=("new courier", 8), bg=COLOR_TOP_FRAME, fg="#F0F0F0")
 boton_actinido.pack(side=tk.LEFT, padx=5)
 
 #boton_x = tk.Button(frame_top, text="X", command=mostrar_protones_igual_neutrones,
@@ -1118,31 +1134,31 @@ boton_actinido.pack(side=tk.LEFT, padx=5)
 #boton_x.pack(side=tk.LEFT, padx=5)
 
 boton_reset = tk.Button(frame_top, text="Resetear", command=resetear, font=("new courier", 8),
-                        bg="#494C50", fg="#F0F0F0", borderwidth=0)
+                        bg=COLOR_TOP_FRAME, fg="#F0F0F0", borderwidth=0)
 boton_reset.pack(side=tk.LEFT, padx=5)
 
-label_version = tk.Label(frame_top, text=f"v{version_total[0]}.{version_total[1]}",
-                         font=("Arial", 10), bg="#494C50", fg="#CACACA")
+label_version = tk.Label(frame_top, text=f"v {version_total[0]}.{version_total[1]}",
+                         font=("Arial", 10), bg=COLOR_TOP_FRAME, fg="#FF8888")
 label_version.pack(side=tk.RIGHT, padx=5)
 
 boton_grafica = tk.Button(frame_graficas, text="radios atomicos", height=1, width=12,
                           relief="ridge", command=mostrar_grafica_radio_atomico,
-                          font=("Arial", 10))
+                          font=("Arial", 10), bg=COLOR_B_GRAFICAS, fg="#F0F0F0")
 boton_grafica.pack(pady=2, side="left")
 
 boton_grafica_melting = tk.Button(frame_graficas, text="fusión", height=1, width=12,
                                   relief="ridge", command=mostrar_grafica_melting_point,
-                                  font=("Arial", 10))
+                                  font=("Arial", 10), bg=COLOR_B_GRAFICAS, fg="#F0F0F0")
 boton_grafica_melting.pack(pady=2, side="left")
 
 boton_grafica_boiling = tk.Button(frame_graficas, text="ebullición", height=1, width=12,
                                   relief="ridge", command=mostrar_grafica_boiling_point,
-                                  font=("Arial", 10))
+                                  font=("Arial", 10), bg=COLOR_B_GRAFICAS, fg="#F0F0F0")
 boton_grafica_boiling.pack(pady=2, side="left")
 
 boton_grafica_densidad = tk.Button(frame_graficas, text="densidad", height=1, width=12,
                                    relief="ridge", command=mostrar_grafica_densidad,
-                                   font=("Arial", 10))
+                                   font=("Arial", 10), bg=COLOR_B_GRAFICAS, fg="#F0F0F0")
 boton_grafica_densidad.pack(pady=2, side="left")
 
 boton_grafica_radar_sh = tk.Button(
@@ -1152,7 +1168,8 @@ boton_grafica_radar_sh = tk.Button(
     width=18,
     relief="ridge",
     command=mostrar_grafica_specific_heat,
-    font=("Arial", 10)
+    font=("Arial", 10),
+    bg=COLOR_B_GRAFICAS, fg="#F0F0F0"
 )
 boton_grafica_radar_sh.pack(pady=2, side="left")
 
@@ -1181,6 +1198,7 @@ for elem in elementos:
         frame_botones,
         text=str(elem.symbol),
         width=4,
+        bg="gray75",
         font=("Arial", 12),
         command=lambda z=elem.atomic_number: seleccionar_por_z(z)
     )
