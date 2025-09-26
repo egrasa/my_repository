@@ -476,6 +476,18 @@ class AnalizadorVideosApp:
         """Inicia el análisis de la carpeta seleccionada"""
         if self.carpeta:
             self._parar_analisis = False  # Reset al iniciar
+            # -- seleccionar la pestaña "Resultados" automáticamente --
+            try:
+                self.notebook.select(self.frame_resultados)
+            except (tk.TclError, AttributeError) as e:
+                # En caso de problemas específicos con tkinter/notebook (por ejemplo
+                # si el widget no existe o hay un error de Tcl), registrar el error
+                # y continuar sin interrumpir. Evitamos capturar Exception de forma genérica.
+                try:
+                    print(f"Ignoring notebook selection error: {e}")
+                except OSError:
+                    # Proteger el print en entornos donde stdout pueda fallar
+                    pass
             self.boton_parar["state"] = "normal"
             self.boton["state"] = "disabled"
             self.boton_grafico["state"] = "disabled"
@@ -639,7 +651,8 @@ class AnalizadorVideosApp:
 
     def mostrar_boxplot_ratio(self):
         """Genera un boxplot de la relación Peso/Duración (MB/min)
-        con puntos y outliers anotados."""
+        con puntos y outliers anotados. La caja central es semitransparente
+        para que se vean todos los puntos debajo / encima."""
         if not self.resultados:
             messagebox.showinfo("Sin datos", "No hay vídeos válidos para graficar.")
             return
@@ -662,22 +675,36 @@ class AnalizadorVideosApp:
                 try:
                     plt.style.use(s)
                 except (OSError, ValueError, ImportError):
-                    # Si no se puede aplicar el estilo, continuar con el siguiente
-                    # Evitamos capturar Exception de forma genérica
                     continue
                 break
+
         # Boxplot con puntos jitter
         _, ax = plt.subplots(figsize=(10, 6))
-        ax.boxplot(ratios, vert=True, patch_artist=True,
-                   boxprops=dict(facecolor='#9fb3c8', color='#2b5f78'),
-                   medianprops=dict(color='red'))
-        # añadir puntos jitter
+        # Hacemos la caja semitransparente (alpha) y usamos patch_artist para que se aplique
+        box = ax.boxplot(ratios, vert=True, patch_artist=True, showfliers=True,
+						 boxprops=dict(facecolor='#9fb3c8', color='#2b5f78', alpha=0.35),
+						 medianprops=dict(color='red', linewidth=2),
+						 whiskerprops=dict(color='#2B6D8B'),
+						 capprops=dict(color='#2B6D8B'),
+						 flierprops=dict(marker='D', markerfacecolor='#E76F51', markersize=6,
+                       alpha=0.9, markeredgecolor='k'))
+
+        # añadir puntos jitter por encima (zorder alto) para mayor visibilidad
         x = np.random.normal(1, 0.04, size=len(ratios))
-        ax.scatter(x, ratios, alpha=0.8, color='#264653')
+        ax.scatter(x, ratios, alpha=0.85, color='#264653', edgecolor='black', s=50, zorder=5)
+
         ax.set_xticks([1])
         ax.set_xticklabels(['Peso/Duración (MB/min)'])
         ax.set_ylabel('MB por minuto')
         ax.set_title('Boxplot: distribución de Peso/Duración')
+
+        # Si el backend/versión no aplica alpha desde boxprops, aseguramos set_alpha en los patches
+        try:
+            for patch in box.get('boxes', []):
+                patch.set_alpha(0.35)
+        except (AttributeError, TypeError) as e:
+            # No interrumpir si algo falla al ajustar patches; registrar para depuración
+            print(f"Ignoring patch alpha set error: {e}")
 
         # detectar outliers por IQR y anotarlos
         q1 = np.percentile(ratios, 25)
@@ -689,7 +716,8 @@ class AnalizadorVideosApp:
         if outliers:
             for name, val in outliers:
                 ax.annotate(name, (1.02, val), xytext=(8, 0), textcoords='offset points',
-                            va='center', fontsize=8, color='darkred')
+							va='center', fontsize=8, color='darkred')
+
         plt.tight_layout()
         plt.show()
 
@@ -906,10 +934,6 @@ class AnalizadorVideosApp:
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
         self.root.after(0, destruir_barra)
         # Actualiza resultados para mostrar solo nombre, duracion, peso
-        self.resultados = [(nombre, duracion, peso) for nombre, duracion, peso, _, _ in resultados]
-
-        self.root.after(0, lambda: self._actualizar_progreso(total, 100))
-        self.root.after(0, destruir_barra)
         self.resultados = [(nombre, duracion, peso) for nombre, duracion, peso, _, _ in resultados]
 
         tiempo_fin = time.time()  # <-- Añade esto justo antes de actualizar_interfaz
