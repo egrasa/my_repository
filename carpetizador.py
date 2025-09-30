@@ -107,10 +107,10 @@ def seleccionar_carpeta():
             boton_new.config(state='normal', bg='lightgreen', fg='blue')
             entrada_nombre.delete(0, tk.END)
             entrada_nombre.insert(0, "Elements14Tb_new")
-        elif "Elements14Tb_last" in nombre_carpeta:
+        elif "Elements18Tb_last" in nombre_carpeta:
             boton_last.config(state='normal', bg='lightgreen', fg='blue')
             entrada_nombre.delete(0, tk.END)
-            entrada_nombre.insert(0, "Elements14Tb_last")
+            entrada_nombre.insert(0, "Elements18Tb_last")
         elif "Seagate8Tb_Desktop" in nombre_carpeta:
             boton_seagate.config(state='normal', bg='lightgreen', fg='blue')
             entrada_nombre.delete(0, tk.END)
@@ -225,19 +225,26 @@ def crear_archivo():
              open(ruta_csv, 'w', newline='', encoding='utf-8') as archivo_csv:
 
             csv_writer = csv.writer(archivo_csv)
-            csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen"])
+            # Añadida columna NumFiles para indicar número de archivos en cada carpeta
+            csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen", "NumFiles"])
 
             count = 0
             for root, dirs, _ in os.walk(carpeta):
                 for diri in dirs:
                     dir_path = os.path.join(root, diri)
-                    size = sum(os.path.getsize(os.path.join(dir_path, f))
-                               for f in os.listdir(dir_path)
-                               if os.path.isfile(os.path.join(dir_path, f)))
+                    # calcular tamaño y número de archivos dentro de la carpeta
+                    try:
+                        file_list = [f for f in os.listdir(dir_path) if
+                                     os.path.isfile(os.path.join(dir_path, f))]
+                    except (PermissionError, FileNotFoundError):
+                        file_list = []
+                    size = sum(os.path.getsize(os.path.join(dir_path, f)) for f in file_list)
                     size_gb = size / (1024 ** 3)
+                    num_files = len(file_list)
                     total_size_gb += size_gb
                     archivo_txt.write(f"{diri}: {size_gb:.2f} GB\n")
-                    csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1]])
+                    csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1],
+                                         str(num_files)])
                     count += 1
                     file_count += 1
                     progress['value'] = count
@@ -249,18 +256,24 @@ def crear_archivo():
              open(ruta_csv2, 'w', newline='', encoding='utf-8') as archivo_csv:
 
             csv_writer = csv.writer(archivo_csv)
-            csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen"])
+            # Añadida columna NumFiles en la segunda copia del CSV
+            csv_writer.writerow(["Nombre", "Tamaño (GB)", "Origen", "NumFiles"])
 
             count = 0
             for root, dirs, _ in os.walk(carpeta):
                 for diri in dirs:
                     dir_path = os.path.join(root, diri)
-                    size = sum(os.path.getsize(os.path.join(dir_path, f))
-                               for f in os.listdir(dir_path)
-                               if os.path.isfile(os.path.join(dir_path, f)))
+                    try:
+                        file_list = [f for f in os.listdir(dir_path) if
+                                     os.path.isfile(os.path.join(dir_path, f))]
+                    except (PermissionError, FileNotFoundError):
+                        file_list = []
+                    size = sum(os.path.getsize(os.path.join(dir_path, f)) for f in file_list)
                     size_gb = size / (1024 ** 3)
+                    num_files = len(file_list)
                     archivo_txt.write(f"{diri}: {size_gb:.2f} GB\n")
-                    csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1]])
+                    csv_writer.writerow([diri, f"{size_gb:.2f}", dir_path.split('/')[1],
+                                         str(num_files)])
                     count += 1
                     progress['value'] = count
                     porcentaje = int((count / progress['maximum']) * 100)
@@ -312,8 +325,8 @@ def nombre_new():
     boton_new.config(state='disabled', bg='lightgray')
 
 def nombre_last():
-    """ fn nombre Elements14Tb_last """
-    nombre_archivo = "Elements14Tb_last"
+    """ fn nombre Elements18Tb_last """
+    nombre_archivo = "Elements18Tb_last"
     if nombre_archivo not in lista_carpetizados:
         lista_carpetizados.append(nombre_archivo)
         dar_nombre(nombre_archivo)
@@ -593,7 +606,7 @@ boton_new = tk.Button(frame_botones, text="Elements14Tb_new", width=20, command=
                       state='disabled', bg='lightgray')
 boton_new.grid(pady=0, row=0, column=1)
 
-boton_last = tk.Button(frame_botones, text="Elements14Tb_last", width=20, command=nombre_last,
+boton_last = tk.Button(frame_botones, text="Elements18Tb_last", width=20, command=nombre_last,
                        state='disabled', bg='lightgray')
 boton_last.grid(pady=0, row=0, column=2)
 
