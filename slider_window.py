@@ -4,6 +4,8 @@ from tkinter import ttk
 import time
 from collections import deque
 import argparse
+import matplotlib.pyplot as plt
+
 
 EX_LIST = []
 
@@ -165,6 +167,75 @@ def build_window(auto_close=False, close_after_ms=1000):
                          width=label_width_chars, anchor='center', justify='center')
     cil_value.pack(fill='x', padx=6, pady=6)
 
+    # ----------------- Registrador simple in-app -----------------
+    records = []  # list of (timestamp, mando, tdp, tfa, cilindros)
+    recorder_job = None
+    record_interval_ms = 500
+
+    def _sample_once():
+        # snapshot current values
+        try:
+            mando_v = float(mando_display.cget('text'))
+        except (ValueError, TypeError, tk.TclError) as e:
+            mando_v = latest_mando
+            EX_LIST.append(f"Error reading mando_display text in _sample_once: {e}")
+        try:
+            tfa_v = float(tfa_delay_display.cget('text'))
+        except (ValueError, TypeError, tk.TclError) as e:
+            tfa_v = last_tfa
+            EX_LIST.append(f"Error reading tfa_delay_display text in _sample_once: {e}")
+        try:
+            tdp_v = float(tdp_display.cget('text'))
+        except (ValueError, TypeError, tk.TclError) as e:
+            tdp_v = latest_tdp
+            EX_LIST.append(f"Error reading tdp_display text in _sample_once: {e}")
+        try:
+            cil_v = float(cil_value.cget('text'))
+        except (ValueError, TypeError, tk.TclError) as e:
+            cil_v = latest_mapped
+            EX_LIST.append(f"Error reading cil_value text in _sample_once: {e}")
+        records.append((time.time(), mando_v, tdp_v, tfa_v, cil_v))
+
+    def _recorder_loop():
+        nonlocal recorder_job
+        _sample_once()
+        recorder_job = root.after(record_interval_ms, _recorder_loop)
+
+    def start_recording():
+        nonlocal recorder_job
+        if recorder_job is None:
+            _recorder_loop()
+            start_rec_btn.config(state='disabled')
+            stop_rec_btn.config(state='normal')
+
+    def stop_recording():
+        nonlocal recorder_job
+        if recorder_job is not None:
+            root.after_cancel(recorder_job)
+            recorder_job = None
+            start_rec_btn.config(state='normal')
+            stop_rec_btn.config(state='disabled')
+
+    def view_plot():
+        if not records:
+            return
+        times = [r[0] - records[0][0] for r in records]
+        mando_s = [r[1] for r in records]
+        tdp_s = [r[2] for r in records]
+        tfa_s = [r[3] for r in records]
+        cil_s = [r[4] for r in records]
+        _, ax = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+        ax[0].plot(times, mando_s, label='Mando')
+        ax[0].plot(times, tfa_s, label='TFA')
+        ax[0].plot(times, cil_s, label='Cilindros')
+        ax[0].legend()
+        ax[0].set_ylabel('valores')
+        ax[1].plot(times, tdp_s, label='TDP', color='tab:blue')
+        ax[1].legend()
+        ax[1].set_ylabel('TDP')
+        ax[1].set_xlabel('segundos')
+        plt.show()
+
     # Label de estado (oculto por defecto). Usamos tk.Label para controlar bg/fg fácilmente
     emergency_label = tk.Label(frame, text='EMERGENCIA', fg='white',
                                bg='red', anchor='center',
@@ -187,6 +258,19 @@ def build_window(auto_close=False, close_after_ms=1000):
     last_tfa_time = time.time()
     # tiempo en el que se aplicó last_tfa (segundos epoch)
     last_tfa_time = time.time()
+
+    # Botones para registrar / parar y ver gráfica en la parte inferior
+    bottom_buttons_frame = ttk.Frame(frame)
+    bottom_buttons_frame.pack(side='bottom', fill='x', pady=(10,0))
+    start_rec_btn = tk.Button(bottom_buttons_frame, text='Empezar registro',
+                              command=start_recording, bg='green', fg='white')
+    stop_rec_btn = tk.Button(bottom_buttons_frame, text='Parar registro',
+                             command=stop_recording, state='disabled', bg='red', fg='white')
+    view_plot_btn = tk.Button(bottom_buttons_frame, text='Visualizar gráfica',
+                              command=view_plot, bg='blue', fg='white')
+    start_rec_btn.pack(side='left', padx=(0,10))
+    stop_rec_btn.pack(side='left', padx=(0,10))
+    view_plot_btn.pack(side='left')
 
     def update_state():
         """Actualiza la etiqueta de estado según latest_mapped y latest_mando.
