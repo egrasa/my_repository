@@ -17,8 +17,8 @@ def build_window(auto_close=False, close_after_ms=1000):
     frame = ttk.Frame(root, padding=24)
     frame.pack(fill='both', expand=True)
 
-    label = ttk.Label(frame, text='Ajusta el valor (0 - 5):')
-    label.pack(pady=(0,6))
+    #label = ttk.Label(frame, text='Ajusta el valor (0 - 5):')
+    #label.pack(pady=(0,6))
 
     # Crear el slider (se hará responsivo). No asignamos command aún; lo configuramos
     # después de definir on_change para aceptar el value argument.
@@ -74,14 +74,14 @@ def build_window(auto_close=False, close_after_ms=1000):
         def refill_step():
             nonlocal refill_job, latest_tdp
             # aumentar TDP en 0.1, hasta un máximo de 10
-            latest_tdp = min(10.0, latest_tdp + 0.1)
+            latest_tdp = min(10.0, latest_tdp + 0.05)
             # actualizar indicador (si está en modo recarga, mantener el icono)
             try:
                 tdp_display.config(text=f"🔄 {latest_tdp:.2f}")
             except tk.TclError as e:
                 EX_LIST.append(f"Error updating tdp_display text during refill_step: {e}")
             if latest_tdp < 10.0:
-                refill_job = root.after(2000, refill_step)
+                refill_job = root.after(500, refill_step)
             else:
                 # terminado
                 refill_job = None
@@ -94,10 +94,15 @@ def build_window(auto_close=False, close_after_ms=1000):
                 refill_btn.config(state='normal')
 
         # empezar el primer paso en 2s
-        refill_job = root.after(2000, refill_step)
+        refill_job = root.after(500, refill_step)
 
     refill_btn = ttk.Button(frame, text='Recargar TDP', command=start_refill)
     refill_btn.pack(side='top', anchor='ne', pady=(4,6))
+
+    # Checkbutton para bypass de la lógica TDP
+    bypass_var = tk.BooleanVar(value=True)
+    bypass_cb = ttk.Checkbutton(frame, text='Bypass TDP', variable=bypass_var)
+    bypass_cb.pack(side='top', anchor='ne')
 
     # Mostrar Mando centrado encima del slider
     mando_label = ttk.Label(frame, text='Mando', font=('TkDefaultFont', 10, 'bold'))
@@ -121,7 +126,7 @@ def build_window(auto_close=False, close_after_ms=1000):
         w = marker_canvas.winfo_width() or 400
         # h = marker_canvas.winfo_height() or 80
         # valores de marcador (en escala 0..5)
-        markers = [4.9, 4.0, 2.0]
+        markers = [5.0, 4.9, 4.0, 2.0, 0.0]
         for val in markers:
             # posición relativa en píxeles según el ancho actual
             x = int((val - 0.0) / 5.0 * w)
@@ -175,13 +180,19 @@ def build_window(auto_close=False, close_after_ms=1000):
     latest_mando = initial_s
     latest_mapped = initial_mapped
     latest_tdp = 10.0
+    # flag que indica emergencia forzada por TDP (cuando bypass desactivado y TDP<7)
+    emergency_tdp_active = False
     last_tfa = initial_s
+    # tiempo en el que se aplicó last_tfa (segundos epoch)
+    last_tfa_time = time.time()
+    # tiempo en el que se aplicó last_tfa (segundos epoch)
+    last_tfa_time = time.time()
 
     def update_state():
         """Actualiza la etiqueta de estado según latest_mapped y latest_mando.
         Prioridad: Aflojado (mapped==0) > EMERGENCIA (mando<2) > Frenado (resto).
         """
-        nonlocal latest_mando, latest_mapped
+        nonlocal latest_mando, latest_mapped, emergency_tdp_active
         if latest_mapped == 0.0:
             emergency_label.config(text='Aflojado', bg='green', fg='white')
             if not emergency_label.winfo_ismapped():
@@ -191,7 +202,7 @@ def build_window(auto_close=False, close_after_ms=1000):
             except tk.TclError:
                 mando_display.config(fg='black')
                 EX_LIST.append("Error setting mando_display fg to black in Aflojado state")
-        elif latest_mando < 2.0:
+        elif latest_mando < 2.0 or emergency_tdp_active:
             emergency_label.config(text='EMERGENCIA', bg='red', fg='white')
             if not emergency_label.winfo_ismapped():
                 emergency_label.pack(fill='x', pady=(8,0))
@@ -236,7 +247,7 @@ def build_window(auto_close=False, close_after_ms=1000):
         """Procesa el buffer y actualiza `tfa_delay_display` con el valor de Mando retrasado.
         Se ejecuta periódicamente cada poll_ms.
         """
-        nonlocal latest_mapped, latest_tdp, last_tfa
+        nonlocal latest_mapped, latest_tdp, last_tfa, last_tfa_time, emergency_tdp_active
         now = time.time()
         target_time = now - delay_seconds
 
@@ -252,34 +263,71 @@ def build_window(auto_close=False, close_after_ms=1000):
             chosen = sample_buffer[0][1]
 
         if chosen is not None:
+
+            # Si el bypass está desactivado, comprobar TDP para activar emergencia TDP
             try:
-                # actualizar suavemente: interpolación simple hacia chosen
-                current = float(tfa_delay_display.cget('text'))
-            except ValueError:
-                current = chosen
-                EX_LIST.append("Error converting tfa_delay_display text to float in process_delay")
-            # un paso de easing hacia el objetivo (50% del delta)
-            # Animar hacia el objetivo (chosen), pero primero aplicar la lógica de consumo
-            # Consumir TDP sólo por aumentos en TFA (respecto al último TFA mostrado)
+                bypass_on = bool(bypass_var.get())
+            except tk.TclError as e:
+                bypass_on = True
+                EX_LIST.append(f"Error reading bypass_var in process_delay: {e}")
+
+            if not bypass_on:
+                # activar emergencia por TDP si baja de 7.0
+                if not emergency_tdp_active and latest_tdp < 7.0:
+                    emergency_tdp_active = True
+                # desactivar emergencia por TDP solo cuando suba por encima de 7.5
+                if emergency_tdp_active and latest_tdp > 7.5:
+                    emergency_tdp_active = False
+
+            # objetivo por defecto
             target_for_tfa = chosen
 
-            # Si la TFA actual (last_tfa) es mayor que latest_tdp y latest_tdp<=5,
-            # mantenemos el límite de TFA por latest_tdp as before
-            if latest_tdp <= 5.0 and target_for_tfa > latest_tdp:
+            # detectar emergencia por mando o por TDP y forzar descenso a 0.0
+            emergency = (latest_mando < 2.0) or emergency_tdp_active
+            if emergency:
+                target_for_tfa = 0.0
+
+            # si no hay emergencia, limitar por latest_tdp cuando corresponda
+            if not emergency and latest_tdp <= 5.0 and target_for_tfa > latest_tdp:
                 target_for_tfa = latest_tdp
 
-            new_val = current + (target_for_tfa - current) * 0.5
+            # Rate limiter normal: ±1 unidad cada 0.5s => 2.0 unidades/segundo
+            max_rate = 2.0
+            # emergency down-rate: 1 unidad cada 0.2s => 5.0 unidades/segundo
+            emergency_rate = 5.0
+            now_ts = time.time()
+            elapsed = max(1e-6, now_ts - last_tfa_time)
+
+            # calcular delta deseado desde last_tfa hacia target_for_tfa
+            try:
+                desired_delta = float(target_for_tfa) - float(last_tfa)
+            except (TypeError, ValueError):
+                desired_delta = 0.0
+                EX_LIST.append("Error calculating desired_delta in process_delay")
+
+            # límites permitidos según dirección y estado
+            allowed_up = max_rate * elapsed
+            allowed_down = (emergency_rate if emergency else max_rate) * elapsed
+
+            # clamp desired_delta según sentido
+            if desired_delta > 0:
+                limited_delta = min(desired_delta, allowed_up)
+            else:
+                limited_delta = max(desired_delta, -allowed_down)
+
+            # Si estamos en emergencia no permitimos incremento (solo descenso hasta 0)
+            if emergency and limited_delta > 0:
+                limited_delta = 0.0
+
+            # aplicar delta limitado
+            new_val = last_tfa + limited_delta
 
             # calcular consumo: diferencia positiva respecto al último TFA mostrado
-            # Calcular delta de forma segura sin capturar una excepción demasiado general.
-            if isinstance(last_tfa, (int, float)) and isinstance(new_val, (int, float)):
-                delta = new_val - last_tfa
-            else:
-                try:
-                    delta = float(new_val) - float(last_tfa)
-                except (TypeError, ValueError, NameError):
-                    delta = 0.0
-                    EX_LIST.append("Error calculating delta in process_delay")
+            try:
+                delta = float(new_val) - float(last_tfa)
+            except (TypeError, ValueError):
+                delta = 0.0
+                EX_LIST.append("Error calculating delta in process_delay")
             if delta > 0:
                 consume = 0.1 * delta
                 # decrementar latest_tdp (solo disminuye)
@@ -305,8 +353,13 @@ def build_window(auto_close=False, close_after_ms=1000):
                 tdp_display.config(text=f"{latest_tdp:.2f}")
             except tk.TclError as e:
                 EX_LIST.append(f"Error updating tdp_display in process_delay: {e}")
-            # actualizar last_tfa
+            # actualizar last_tfa y su timestamp
             last_tfa = new_val
+            try:
+                last_tfa_time = now_ts
+            except NameError:
+                # fallback: usar tiempo actual
+                last_tfa_time = time.time()
 
             # Además, recalcular el mapeo de Cilindros respecto al valor retrasado (TFA)
             tfa_val = new_val
