@@ -5,6 +5,7 @@ import time
 from collections import deque
 import argparse
 
+EX_LIST = []
 
 def build_window(auto_close=False, close_after_ms=1000):
     """Construye y devuelve la ventana principal con un slider."""
@@ -67,8 +68,8 @@ def build_window(auto_close=False, close_after_ms=1000):
         try:
             tdp_display.config(bg='#cfefff')
             tdp_display.config(text=f"🔄 {latest_tdp:.2f}")
-        except Exception:
-            pass
+        except tk.TclError as e:
+            EX_LIST.append(f"Error setting tdp_display config: {e}")
 
         def refill_step():
             nonlocal refill_job, latest_tdp
@@ -77,8 +78,8 @@ def build_window(auto_close=False, close_after_ms=1000):
             # actualizar indicador (si está en modo recarga, mantener el icono)
             try:
                 tdp_display.config(text=f"🔄 {latest_tdp:.2f}")
-            except Exception:
-                pass
+            except tk.TclError as e:
+                EX_LIST.append(f"Error updating tdp_display text during refill_step: {e}")
             if latest_tdp < 10.0:
                 refill_job = root.after(2000, refill_step)
             else:
@@ -88,8 +89,8 @@ def build_window(auto_close=False, close_after_ms=1000):
                 try:
                     tdp_display.config(bg=root.cget('bg'))
                     tdp_display.config(text=f"{latest_tdp:.2f}")
-                except Exception:
-                    pass
+                except tk.TclError as e:
+                    EX_LIST.append(f"Error restoring tdp_display config after refill: {e}")
                 refill_btn.config(state='normal')
 
         # empezar el primer paso en 2s
@@ -114,7 +115,7 @@ def build_window(auto_close=False, close_after_ms=1000):
     marker_canvas = tk.Canvas(frame, height=80, highlightthickness=0)
     marker_canvas.pack(fill='x', padx=20, pady=(0,8))
 
-    def draw_markers(event=None):
+    def draw_markers(_event=None):
         """Dibujar sólo las marcas (ticks) sin texto de etiqueta."""
         marker_canvas.delete('all')
         w = marker_canvas.winfo_width() or 400
@@ -189,6 +190,7 @@ def build_window(auto_close=False, close_after_ms=1000):
                 mando_display.config(foreground='black')
             except tk.TclError:
                 mando_display.config(fg='black')
+                EX_LIST.append("Error setting mando_display fg to black in Aflojado state")
         elif latest_mando < 2.0:
             emergency_label.config(text='EMERGENCIA', bg='red', fg='white')
             if not emergency_label.winfo_ismapped():
@@ -197,6 +199,7 @@ def build_window(auto_close=False, close_after_ms=1000):
                 mando_display.config(foreground='red')
             except tk.TclError:
                 mando_display.config(fg='red')
+                EX_LIST.append("Error setting mando_display fg to red in EMERGENCIA state")
         else:
             # Frenado (naranja)
             emergency_label.config(text='Frenado', bg='orange', fg='black')
@@ -206,6 +209,7 @@ def build_window(auto_close=False, close_after_ms=1000):
                 mando_display.config(foreground='black')
             except tk.TclError:
                 mando_display.config(fg='black')
+                EX_LIST.append("Error setting mando_display fg to black in Frenado state")
     def on_change(value=None):
         """Handler llamado en tiempo real por el slider.
         Guarda una muestra timestamped en el buffer para producir TFA retrasado.
@@ -216,6 +220,7 @@ def build_window(auto_close=False, close_after_ms=1000):
             s = float(value) if value is not None else float(slider.get())
         except ValueError:
             s = float(slider.get())
+            EX_LIST.append("Error converting slider value to float in on_change")
 
         # Actualizar display inmediato de Mando
         mando_display.config(text=f"{s:.1f}")
@@ -252,6 +257,7 @@ def build_window(auto_close=False, close_after_ms=1000):
                 current = float(tfa_delay_display.cget('text'))
             except ValueError:
                 current = chosen
+                EX_LIST.append("Error converting tfa_delay_display text to float in process_delay")
             # un paso de easing hacia el objetivo (50% del delta)
             # Animar hacia el objetivo (chosen), pero primero aplicar la lógica de consumo
             # Consumir TDP sólo por aumentos en TFA (respecto al último TFA mostrado)
@@ -265,10 +271,15 @@ def build_window(auto_close=False, close_after_ms=1000):
             new_val = current + (target_for_tfa - current) * 0.5
 
             # calcular consumo: diferencia positiva respecto al último TFA mostrado
-            try:
+            # Calcular delta de forma segura sin capturar una excepción demasiado general.
+            if isinstance(last_tfa, (int, float)) and isinstance(new_val, (int, float)):
                 delta = new_val - last_tfa
-            except Exception:
-                delta = 0.0
+            else:
+                try:
+                    delta = float(new_val) - float(last_tfa)
+                except (TypeError, ValueError, NameError):
+                    delta = 0.0
+                    EX_LIST.append("Error calculating delta in process_delay")
             if delta > 0:
                 consume = 0.1 * delta
                 # decrementar latest_tdp (solo disminuye)
@@ -283,16 +294,17 @@ def build_window(auto_close=False, close_after_ms=1000):
                 if latest_tdp < 8.0 and refill_job is None:
                     # iniciar recarga automática
                     start_refill()
-            except Exception:
-                # en caso de cualquier problema con el botón/refill, ignorar para no romper el loop
-                pass
+            except tk.TclError as e:
+                # en caso de cualquier problema con el botón/refill,
+                # registrar y continuar para no romper el loop
+                EX_LIST.append(f"Error checking/starting auto refill: {e}")
 
             # actualizar displays
             tfa_delay_display.config(text=f"{new_val:.1f}")
             try:
                 tdp_display.config(text=f"{latest_tdp:.2f}")
-            except Exception:
-                pass
+            except tk.TclError as e:
+                EX_LIST.append(f"Error updating tdp_display in process_delay: {e}")
             # actualizar last_tfa
             last_tfa = new_val
 
@@ -315,8 +327,8 @@ def build_window(auto_close=False, close_after_ms=1000):
             # Mostrar el TDP actual (latest_tdp). Nota: latest_tdp sólo puede disminuir.
             try:
                 tdp_display.config(text=f"{latest_tdp:.2f}")
-            except Exception:
-                pass
+            except tk.TclError as e:
+                EX_LIST.append(f"Error updating tdp_display in process_delay: {e}")
 
         # reprogramar
         root.after(poll_ms, process_delay)
@@ -344,3 +356,8 @@ if __name__ == '__main__':
 
     win = build_window(auto_close=args.auto_close)
     win.mainloop()
+
+NUMBER_EX = len(EX_LIST)
+print("Exceptions captured during execution: ", NUMBER_EX)
+for ex in EX_LIST:
+    print(f"- {ex}")
