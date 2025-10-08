@@ -256,18 +256,17 @@ def build_window(auto_close=False, close_after_ms=1000):
     last_tfa = initial_s
     # tiempo en el que se aplicó last_tfa (segundos epoch)
     last_tfa_time = time.time()
-    # tiempo en el que se aplicó last_tfa (segundos epoch)
-    last_tfa_time = time.time()
 
     # Botones para registrar / parar y ver gráfica en la parte inferior
     bottom_buttons_frame = ttk.Frame(frame)
     bottom_buttons_frame.pack(side='bottom', fill='x', pady=(10,0))
+    ttk.Separator(bottom_buttons_frame, orient='horizontal').pack(fill='x', pady=(5,5))
     start_rec_btn = tk.Button(bottom_buttons_frame, text='Empezar registro',
-                              command=start_recording, bg='green', fg='white')
+                              command=start_recording, bg='#98FB98', fg='black')
     stop_rec_btn = tk.Button(bottom_buttons_frame, text='Parar registro',
-                             command=stop_recording, state='disabled', bg='red', fg='white')
+                             command=stop_recording, state='disabled', bg='#FFA07A', fg='black')
     view_plot_btn = tk.Button(bottom_buttons_frame, text='Visualizar gráfica',
-                              command=view_plot, bg='blue', fg='white')
+                              command=view_plot, bg='#87CEFA', fg='black')
     start_rec_btn.pack(side='left', padx=(0,10))
     stop_rec_btn.pack(side='left', padx=(0,10))
     view_plot_btn.pack(side='left')
