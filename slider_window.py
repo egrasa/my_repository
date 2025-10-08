@@ -236,6 +236,9 @@ def build_window(auto_close=False, close_after_ms=1000):
         ax[1].set_xlabel('segundos')
         plt.show()
 
+    def clear_records():
+        records.clear()
+
     # Label de estado (oculto por defecto). Usamos tk.Label para controlar bg/fg fácilmente
     emergency_label = tk.Label(frame, text='EMERGENCIA', fg='white',
                                bg='red', anchor='center',
@@ -256,6 +259,8 @@ def build_window(auto_close=False, close_after_ms=1000):
     last_tfa = initial_s
     # tiempo en el que se aplicó last_tfa (segundos epoch)
     last_tfa_time = time.time()
+    last_cil = initial_mapped
+    last_cil_time = time.time()
 
     # Botones para registrar / parar y ver gráfica en la parte inferior
     bottom_buttons_frame = ttk.Frame(frame)
@@ -267,9 +272,12 @@ def build_window(auto_close=False, close_after_ms=1000):
                              command=stop_recording, state='disabled', bg='#FFA07A', fg='black')
     view_plot_btn = tk.Button(bottom_buttons_frame, text='Visualizar gráfica',
                               command=view_plot, bg='#87CEFA', fg='black')
+    clear_btn = tk.Button(bottom_buttons_frame, text='Limpiar datos',
+                          command=clear_records, bg='#D3D3D3', fg='black')
     start_rec_btn.pack(side='left', padx=(0,10))
     stop_rec_btn.pack(side='left', padx=(0,10))
-    view_plot_btn.pack(side='left')
+    view_plot_btn.pack(side='left', padx=(0,10))
+    clear_btn.pack(side='left')
 
     def update_state():
         """Actualiza la etiqueta de estado según latest_mapped y latest_mando.
@@ -330,7 +338,8 @@ def build_window(auto_close=False, close_after_ms=1000):
         """Procesa el buffer y actualiza `tfa_delay_display` con el valor de Mando retrasado.
         Se ejecuta periódicamente cada poll_ms.
         """
-        nonlocal latest_mapped, latest_tdp, last_tfa, last_tfa_time, emergency_tdp_active
+        nonlocal latest_mapped, latest_tdp, last_tfa, last_tfa_time
+        nonlocal emergency_tdp_active, last_cil, last_cil_time
         now = time.time()
         target_time = now - delay_seconds
 
@@ -455,9 +464,19 @@ def build_window(auto_close=False, close_after_ms=1000):
                 tt = (tfa_val - 4.0) / 0.95
                 # interpolación lineal desde 4.0..4.95 -> 3.8..0.6 (aprox)
                 mapped = 3.8 - (3.2 * tt)
-            cil_value.config(text=f"{mapped:.1f}")
+            # Rate limiter for Cilindros: 0.1 unidades cada 200ms => 0.5 unidades/segundo
+            max_cil_rate = 0.5
+            now_cil = time.time()
+            elapsed_cil = max(1e-6, now_cil - last_cil_time)
+            allowed_cil = max_cil_rate * elapsed_cil
+            desired_cil_delta = mapped - last_cil
+            limited_cil_delta = min(max(desired_cil_delta, -allowed_cil), allowed_cil)
+            new_cil = last_cil + limited_cil_delta
+            cil_value.config(text=f"{new_cil:.1f}")
             # actualizar estado compartido y refrescar etiqueta
-            latest_mapped = mapped
+            latest_mapped = new_cil
+            last_cil = new_cil
+            last_cil_time = now_cil
             update_state()
 
             # Mostrar el TDP actual (latest_tdp). Nota: latest_tdp sólo puede disminuir.
