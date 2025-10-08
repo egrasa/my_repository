@@ -2,6 +2,8 @@
 import tkinter as tk
 from tkinter import ttk
 import time
+import csv
+from tkinter import filedialog
 from collections import deque
 import argparse
 import matplotlib.pyplot as plt
@@ -255,43 +257,95 @@ def build_window(auto_close=False, close_after_ms=1000):
                     if k not in series:
                         series[k] = []
                     series[k].append(v)
-        _, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-        # Plot in ax[0]: mando, tfa, cilindros
-        plotted_ax0 = False
-        if 'mando' in series:
-            ax[0].plot(times, series['mando'], label='Mando')
-            plotted_ax0 = True
-        if 'tfa' in series:
-            ax[0].plot(times, series['tfa'], label='TFA')
-            plotted_ax0 = True
-        if 'cilindros' in series:
-            ax[0].plot(times, series['cilindros'], label='Cilindros')
-            plotted_ax0 = True
-        if plotted_ax0:
-            ax[0].legend()
-            ax[0].set_ylabel('valores')
-        # Plot in ax[1]: tdp
+        #_, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+        # Determine which subplots to show
+        subplots_needed = []
+        if any(k in series for k in ['mando', 'tfa', 'cilindros']):
+            subplots_needed.append('analog')
         if 'tdp' in series:
-            ax[1].plot(times, series['tdp'], label='TDP', color='tab:blue')
-            ax[1].legend()
-            ax[1].set_ylabel('TDP')
-        # Plot in ax[2]: señales digitales
-        if 'bypass_tdp' in series:
-            ax[2].step(times, series['bypass_tdp'], label='Bypass TDP', where='post')
-        if 'llenado_tdp' in series:
-            ax[2].step(times, series['llenado_tdp'], label='Llenado TDP', where='post')
-        if 'emergencia' in series:
-            ax[2].step(times, series['emergencia'], label='Emergencia', where='post')
-        if 'frenado' in series:
-            ax[2].step(times, series['frenado'], label='Frenado', where='post')
-        ax[2].legend()
-        ax[2].set_ylabel('señales digitales')
-        ax[2].set_xlabel('segundos')
-        ax[2].set_yticks([0, 1])
+            subplots_needed.append('tdp')
+        if any(k in series for k in ['bypass_tdp', 'llenado_tdp', 'emergencia', 'frenado']):
+            subplots_needed.append('digital')
+        n = len(subplots_needed)
+        if n == 0:
+            return
+        _, ax = plt.subplots(n, 1, figsize=(8, 3*n), sharex=True)
+        if n == 1:
+            ax = [ax]  # make it a list
+        idx = 0
+        # Plot analog
+        if 'analog' in subplots_needed:
+            plotted = False
+            if 'mando' in series:
+                ax[idx].plot(times, series['mando'], label='Mando')
+                plotted = True
+            if 'tfa' in series:
+                ax[idx].plot(times, series['tfa'], label='TFA')
+                plotted = True
+            if 'cilindros' in series:
+                ax[idx].plot(times, series['cilindros'], label='Cilindros')
+                plotted = True
+            if plotted:
+                ax[idx].legend()
+                ax[idx].set_ylabel('valores')
+            idx += 1
+        # Plot TDP
+        if 'tdp' in subplots_needed:
+            ax[idx].plot(times, series['tdp'], label='TDP', color='tab:blue')
+            ax[idx].legend()
+            ax[idx].set_ylabel('TDP')
+            idx += 1
+        # Plot digital
+        if 'digital' in subplots_needed:
+            if 'bypass_tdp' in series:
+                ax[idx].step(times, series['bypass_tdp'], label='Bypass TDP', where='post',
+                             color='yellow')
+            if 'llenado_tdp' in series:
+                ax[idx].step(times, series['llenado_tdp'], label='Llenado TDP', where='post',
+                             color='blue')
+            if 'emergencia' in series:
+                ax[idx].step(times, series['emergencia'], label='Emergencia', where='post',
+                             color='red')
+            if 'frenado' in series:
+                ax[idx].step(times, series['frenado'], label='Frenado', where='post',
+                             color='orange')
+            ax[idx].legend()
+            ax[idx].set_ylabel('señales digitales')
+            ax[idx].set_yticks([0, 1])
+        # Set xlabel on the last subplot
+        ax[-1].set_xlabel('segundos')
         plt.show()
 
     def clear_records():
         records.clear()
+
+    def export_csv():
+        if not records:
+            return
+        # Ask for filename
+        try:
+            fpath = filedialog.asksaveasfilename(defaultextension='.csv',
+                                                 filetypes=[('CSV files', '*.csv')],
+                                                 title='Exportar registros a CSV')
+        except tk.TclError as e:
+            # Only catch Tcl/Tk related errors from the file dialog; let other errors propagate
+            EX_LIST.append(f"File dialog failed: {e}")
+            return
+        if not fpath:
+            return
+        # Determine columns from first record keys (timestamp first)
+        cols = []
+        for k in records[0].keys():
+            cols.append(k)
+        try:
+            with open(fpath, 'w', newline='', encoding='utf-8') as fh:
+                writer = csv.writer(fh)
+                writer.writerow(cols)
+                for r in records:
+                    row = [r.get(c, '') for c in cols]
+                    writer.writerow(row)
+        except (OSError, csv.Error, UnicodeEncodeError) as e:
+            EX_LIST.append(f"Export CSV failed: {e}")
 
     # Label de estado (oculto por defecto). Usamos tk.Label para controlar bg/fg fácilmente
     emergency_label = tk.Label(frame, text='EMERGENCIA', fg='white',
@@ -344,18 +398,30 @@ def build_window(auto_close=False, close_after_ms=1000):
     bottom_buttons_frame = ttk.Frame(frame)
     bottom_buttons_frame.pack(side='bottom', fill='x', pady=(10,0))
     ttk.Separator(bottom_buttons_frame, orient='horizontal').pack(fill='x', pady=(5,5))
-    start_rec_btn = tk.Button(bottom_buttons_frame, text='Start', width=10,
-                              command=start_recording, bg='#98FB98', fg='black')
-    stop_rec_btn = tk.Button(bottom_buttons_frame, text='Stop', width=10,
-                             command=stop_recording, state='disabled', bg='#FFA07A', fg='black')
-    view_plot_btn = tk.Button(bottom_buttons_frame, text='Gráfica', width=10,
-                              command=view_plot, bg='#87CEFA', fg='black')
-    clear_btn = tk.Button(bottom_buttons_frame, text='Limpiar', width=10,
-                          command=clear_records, bg='#D3D3D3', fg='black')
+    # Use ttk buttons and a style for a more professional look
+    style = ttk.Style(root)
+    try:
+        style.theme_use('clam')
+    except tk.TclError:
+        # 'clam' theme may not be available on all platforms; ignore Tcl errors and continue.
+        EX_LIST.append("Warning: 'clam' theme not available; using default theme.")
+    style.configure('Rec.TButton', padding=6)
+
+    start_rec_btn = ttk.Button(bottom_buttons_frame, text='Start', width=10,
+                               style='Rec.TButton', command=start_recording)
+    stop_rec_btn = ttk.Button(bottom_buttons_frame, text='Stop', width=10,
+                              style='Rec.TButton', command=stop_recording, state='disabled')
+    view_plot_btn = ttk.Button(bottom_buttons_frame, text='Gráfica', width=10,
+                               style='Rec.TButton', command=view_plot)
+    clear_btn = ttk.Button(bottom_buttons_frame, text='Limpiar', width=10,
+                           style='Rec.TButton', command=clear_records)
+    export_btn = ttk.Button(bottom_buttons_frame, text='Exportar CSV', width=12,
+                            style='Rec.TButton', command=export_csv)
     start_rec_btn.pack(side='left', padx=(0,10))
     stop_rec_btn.pack(side='left', padx=(0,10))
     view_plot_btn.pack(side='left', padx=(0,10))
-    clear_btn.pack(side='right')
+    clear_btn.pack(side='right', padx=(6,0))
+    export_btn.pack(side='right')
 
     def update_state():
         """Actualiza la etiqueta de estado según latest_mapped y latest_mando.
