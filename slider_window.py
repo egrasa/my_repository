@@ -168,33 +168,61 @@ def build_window(auto_close=False, close_after_ms=1000):
     cil_value.pack(fill='x', padx=6, pady=6)
 
     # ----------------- Registrador simple in-app -----------------
-    records = []  # list of (timestamp, mando, tdp, tfa, cilindros)
+    # Variables para checkbuttons de registro
+    record_mando_var = tk.BooleanVar(value=True)
+    record_tdp_var = tk.BooleanVar(value=True)
+    record_tfa_var = tk.BooleanVar(value=True)
+    record_cil_var = tk.BooleanVar(value=True)
+    record_bypass_var = tk.BooleanVar(value=True)
+    record_llenado_var = tk.BooleanVar(value=True)
+    record_emergencia_var = tk.BooleanVar(value=True)
+    record_frenado_var = tk.BooleanVar(value=True)
+    records = []  # list of dicts with timestamp and selected data
     recorder_job = None
     record_interval_ms = 500
 
     def _sample_once():
-        # snapshot current values
-        try:
-            mando_v = float(mando_display.cget('text'))
-        except (ValueError, TypeError, tk.TclError) as e:
-            mando_v = latest_mando
-            EX_LIST.append(f"Error reading mando_display text in _sample_once: {e}")
-        try:
-            tfa_v = float(tfa_delay_display.cget('text'))
-        except (ValueError, TypeError, tk.TclError) as e:
-            tfa_v = last_tfa
-            EX_LIST.append(f"Error reading tfa_delay_display text in _sample_once: {e}")
-        try:
-            tdp_v = float(tdp_display.cget('text'))
-        except (ValueError, TypeError, tk.TclError) as e:
-            tdp_v = latest_tdp
-            EX_LIST.append(f"Error reading tdp_display text in _sample_once: {e}")
-        try:
-            cil_v = float(cil_value.cget('text'))
-        except (ValueError, TypeError, tk.TclError) as e:
-            cil_v = latest_mapped
-            EX_LIST.append(f"Error reading cil_value text in _sample_once: {e}")
-        records.append((time.time(), mando_v, tdp_v, tfa_v, cil_v))
+        # snapshot current values based on checkbuttons
+        data = {'timestamp': time.time()}
+        if record_mando_var.get():
+            try:
+                mando_v = float(mando_display.cget('text'))
+            except (ValueError, TypeError, tk.TclError) as e:
+                mando_v = latest_mando
+                EX_LIST.append(f"Error reading mando_display text in _sample_once: {e}")
+            data['mando'] = mando_v
+        if record_tdp_var.get():
+            try:
+                tdp_v = float(tdp_display.cget('text'))
+            except (ValueError, TypeError, tk.TclError) as e:
+                tdp_v = latest_tdp
+                EX_LIST.append(f"Error reading tdp_display text in _sample_once: {e}")
+            data['tdp'] = tdp_v
+        if record_tfa_var.get():
+            try:
+                tfa_v = float(tfa_delay_display.cget('text'))
+            except (ValueError, TypeError, tk.TclError) as e:
+                tfa_v = last_tfa
+                EX_LIST.append(f"Error reading tfa_delay_display text in _sample_once: {e}")
+            data['tfa'] = tfa_v
+        if record_cil_var.get():
+            try:
+                cil_v = float(cil_value.cget('text'))
+            except (ValueError, TypeError, tk.TclError) as e:
+                cil_v = latest_mapped
+                EX_LIST.append(f"Error reading cil_value text in _sample_once: {e}")
+            data['cilindros'] = cil_v
+        # Señales digitales
+        if record_bypass_var.get():
+            data['bypass_tdp'] = 1 if bypass_var.get() else 0
+        if record_llenado_var.get():
+            data['llenado_tdp'] = 1 if refill_job is not None else 0
+        if record_emergencia_var.get():
+            data['emergencia'] = 1 if (latest_mando < 2.0 or emergency_tdp_active) else 0
+        if record_frenado_var.get():
+            data['frenado'] = 1 if not (latest_mapped == 0.0) and not (
+                latest_mando < 2.0 or emergency_tdp_active) else 0
+        records.append(data)
 
     def _recorder_loop():
         nonlocal recorder_job
@@ -219,21 +247,47 @@ def build_window(auto_close=False, close_after_ms=1000):
     def view_plot():
         if not records:
             return
-        times = [r[0] - records[0][0] for r in records]
-        mando_s = [r[1] for r in records]
-        tdp_s = [r[2] for r in records]
-        tfa_s = [r[3] for r in records]
-        cil_s = [r[4] for r in records]
-        _, ax = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-        ax[0].plot(times, mando_s, label='Mando')
-        ax[0].plot(times, tfa_s, label='TFA')
-        ax[0].plot(times, cil_s, label='Cilindros')
-        ax[0].legend()
-        ax[0].set_ylabel('valores')
-        ax[1].plot(times, tdp_s, label='TDP', color='tab:blue')
-        ax[1].legend()
-        ax[1].set_ylabel('TDP')
-        ax[1].set_xlabel('segundos')
+        times = [r['timestamp'] - records[0]['timestamp'] for r in records]
+        series = {}
+        for r in records:
+            for k, v in r.items():
+                if k != 'timestamp':
+                    if k not in series:
+                        series[k] = []
+                    series[k].append(v)
+        _, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+        # Plot in ax[0]: mando, tfa, cilindros
+        plotted_ax0 = False
+        if 'mando' in series:
+            ax[0].plot(times, series['mando'], label='Mando')
+            plotted_ax0 = True
+        if 'tfa' in series:
+            ax[0].plot(times, series['tfa'], label='TFA')
+            plotted_ax0 = True
+        if 'cilindros' in series:
+            ax[0].plot(times, series['cilindros'], label='Cilindros')
+            plotted_ax0 = True
+        if plotted_ax0:
+            ax[0].legend()
+            ax[0].set_ylabel('valores')
+        # Plot in ax[1]: tdp
+        if 'tdp' in series:
+            ax[1].plot(times, series['tdp'], label='TDP', color='tab:blue')
+            ax[1].legend()
+            ax[1].set_ylabel('TDP')
+        # Plot in ax[2]: señales digitales
+        if 'bypass_tdp' in series:
+            ax[2].step(times, series['bypass_tdp'], label='Bypass TDP', where='post')
+        if 'llenado_tdp' in series:
+            ax[2].step(times, series['llenado_tdp'], label='Llenado TDP', where='post')
+        if 'emergencia' in series:
+            ax[2].step(times, series['emergencia'], label='Emergencia', where='post')
+        if 'frenado' in series:
+            ax[2].step(times, series['frenado'], label='Frenado', where='post')
+        ax[2].legend()
+        ax[2].set_ylabel('señales digitales')
+        ax[2].set_xlabel('segundos')
+        ax[2].set_yticks([0, 1])
         plt.show()
 
     def clear_records():
@@ -262,22 +316,46 @@ def build_window(auto_close=False, close_after_ms=1000):
     last_cil = initial_mapped
     last_cil_time = time.time()
 
+    # Checkbuttons para seleccionar qué datos registrar
+    checkbuttons_frame = ttk.Frame(frame)
+    checkbuttons_frame.pack(side='bottom', fill='x', pady=(5,0))
+    analog_frame = ttk.Labelframe(checkbuttons_frame, text='Analógicas')
+    analog_frame.pack(side='left', padx=(0,20))
+    ttk.Checkbutton(analog_frame, text='Mando',
+                    variable=record_mando_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(analog_frame, text='TDP',
+                    variable=record_tdp_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(analog_frame, text='TFA',
+                    variable=record_tfa_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(analog_frame, text='Cilindros',
+                    variable=record_cil_var).pack(side='left')
+    digital_frame = ttk.Labelframe(checkbuttons_frame, text='Digitales')
+    digital_frame.pack(side='left')
+    ttk.Checkbutton(digital_frame, text='Bypass TDP',
+                    variable=record_bypass_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(digital_frame, text='Llenado TDP',
+                    variable=record_llenado_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(digital_frame, text='Emergencia',
+                    variable=record_emergencia_var).pack(side='left', padx=(0,10))
+    ttk.Checkbutton(digital_frame, text='Frenado',
+                    variable=record_frenado_var).pack(side='left')
+
     # Botones para registrar / parar y ver gráfica en la parte inferior
     bottom_buttons_frame = ttk.Frame(frame)
     bottom_buttons_frame.pack(side='bottom', fill='x', pady=(10,0))
     ttk.Separator(bottom_buttons_frame, orient='horizontal').pack(fill='x', pady=(5,5))
-    start_rec_btn = tk.Button(bottom_buttons_frame, text='Empezar registro',
+    start_rec_btn = tk.Button(bottom_buttons_frame, text='Start', width=10,
                               command=start_recording, bg='#98FB98', fg='black')
-    stop_rec_btn = tk.Button(bottom_buttons_frame, text='Parar registro',
+    stop_rec_btn = tk.Button(bottom_buttons_frame, text='Stop', width=10,
                              command=stop_recording, state='disabled', bg='#FFA07A', fg='black')
-    view_plot_btn = tk.Button(bottom_buttons_frame, text='Visualizar gráfica',
+    view_plot_btn = tk.Button(bottom_buttons_frame, text='Gráfica', width=10,
                               command=view_plot, bg='#87CEFA', fg='black')
-    clear_btn = tk.Button(bottom_buttons_frame, text='Limpiar datos',
+    clear_btn = tk.Button(bottom_buttons_frame, text='Limpiar', width=10,
                           command=clear_records, bg='#D3D3D3', fg='black')
     start_rec_btn.pack(side='left', padx=(0,10))
     stop_rec_btn.pack(side='left', padx=(0,10))
     view_plot_btn.pack(side='left', padx=(0,10))
-    clear_btn.pack(side='left')
+    clear_btn.pack(side='right')
 
     def update_state():
         """Actualiza la etiqueta de estado según latest_mapped y latest_mando.
