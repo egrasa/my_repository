@@ -1,13 +1,51 @@
 """Ventana con un slider para seleccionar un valor entre 0 y 5."""
+
+import time
+import re
+import csv
 import tkinter as tk
 from tkinter import ttk
-import time
-import csv
 from tkinter import filedialog
 from collections import deque
 import argparse
 import matplotlib.pyplot as plt
 
+
+# Color constants
+REFILL_BG = '#cfefff'
+MARKER_LINE_COLOR = 'black'
+
+RECORDING_ROOT_BG = "#b28cb3"
+RECORDING_FRAME_BG = "#8cb399"
+
+RECORDING_MARKER_CANVAS_BG = "#8cb399"
+RECORDING_EMERGENCY_BG = "#75a0ff"
+RECORDING_REC_TIME_BG = "#8cb399"
+RECORDING_TLABELFRAME_BG = "#8cb399"
+RECORDING_TLABEL_BG = "#8cb399"
+RECORDING_BUTTON_BG = "#44614E"
+RECORDING_CHECKB_BG = "#8cb399"
+RECORDING_SCALE_BG = "#0145BB"
+RECORDING_TDP_BG = "#8cb399"
+
+RECORDING_SCALE_FG = "#ca4545"
+RECORDING_CHECKB_FG = "#e20000"
+RECORDING_BUTTON_FG = "#d3e200"
+RECORDING_TLABEL_FG = "#383838"
+RECORDING_TLABELFRAME_FG = "#ffffff"
+RECORDING_FG = "#d60000"
+
+EMERGENCY_RED = 'red'
+EMERGENCY_WHITE = 'white'
+EMERGENCY_GREEN = 'green'
+EMERGENCY_ORANGE = 'orange'
+
+DEFAULT_BLACK = 'black'
+PLOT_TDP_COLOR = 'tab:blue'
+PLOT_LLENADO_COLOR = 'blue'
+PLOT_EMERGENCIA_COLOR = 'red'
+PLOT_FRENADO_COLOR = 'orange'
+PLOT_BYPASS_COLOR = 'yellow'
 
 EX_LIST = []
 
@@ -70,7 +108,7 @@ def build_window(auto_close=False, close_after_ms=1000):
 
         # indicar visualmente que la recarga ha comenzado
         try:
-            tdp_display.config(bg='#cfefff')
+            tdp_display.config(bg=REFILL_BG)
             tdp_display.config(text=f"🔄 {latest_tdp:.2f}")
         except tk.TclError as e:
             EX_LIST.append(f"Error setting tdp_display config: {e}")
@@ -135,7 +173,7 @@ def build_window(auto_close=False, close_after_ms=1000):
             # posición relativa en píxeles según el ancho actual
             x = int((val - 0.0) / 5.0 * w)
             # dibujar una línea de marcador (tick) corta
-            marker_canvas.create_line(x, 8, x, 18, fill='black', width=2)
+            marker_canvas.create_line(x, 8, x, 18, fill=MARKER_LINE_COLOR, width=2)
 
     # Redibujar al cambiar tamaño
     marker_canvas.bind('<Configure>', draw_markers)
@@ -182,37 +220,48 @@ def build_window(auto_close=False, close_after_ms=1000):
     records = []  # list of dicts with timestamp and selected data
     recorder_job = None
     record_interval_ms = 500
+    # recording timer state
+    record_start_time = None
+    rec_time_job = None
+    # store original colors to be able to restore after recording
+    orig_colors = {}
 
     def _sample_once():
         # snapshot current values based on checkbuttons
         data = {'timestamp': time.time()}
-        if record_mando_var.get():
+
+        def _parse_label_float(label_widget, fallback, label_name):
+            """Try to parse a float from a widget's text, extracting the first numeric token.
+            Returns fallback on failure and logs the issue to EX_LIST."""
             try:
-                mando_v = float(mando_display.cget('text'))
-            except (ValueError, TypeError, tk.TclError) as e:
-                mando_v = latest_mando
-                EX_LIST.append(f"Error reading mando_display text in _sample_once: {e}")
+                txt = label_widget.cget('text')
+            except tk.TclError as e:
+                EX_LIST.append(f"Error reading {label_name} text in _sample_once: {e}")
+                return fallback
+            if txt is None:
+                return fallback
+            # extract first float-like substring
+            m = re.search(r"-?\d+(?:\.\d+)?", str(txt))
+            if not m:
+                EX_LIST.append(f"Could not parse numeric from {label_name} text: '{txt}'")
+                return fallback
+            try:
+                return float(m.group(0))
+            except (ValueError, TypeError) as e:
+                EX_LIST.append(f"Error converting parsed value for {label_name}: {e}")
+                return fallback
+
+        if record_mando_var.get():
+            mando_v = _parse_label_float(mando_display, latest_mando, 'mando_display')
             data['mando'] = mando_v
         if record_tdp_var.get():
-            try:
-                tdp_v = float(tdp_display.cget('text'))
-            except (ValueError, TypeError, tk.TclError) as e:
-                tdp_v = latest_tdp
-                EX_LIST.append(f"Error reading tdp_display text in _sample_once: {e}")
+            tdp_v = _parse_label_float(tdp_display, latest_tdp, 'tdp_display')
             data['tdp'] = tdp_v
         if record_tfa_var.get():
-            try:
-                tfa_v = float(tfa_delay_display.cget('text'))
-            except (ValueError, TypeError, tk.TclError) as e:
-                tfa_v = last_tfa
-                EX_LIST.append(f"Error reading tfa_delay_display text in _sample_once: {e}")
+            tfa_v = _parse_label_float(tfa_delay_display, last_tfa, 'tfa_delay_display')
             data['tfa'] = tfa_v
         if record_cil_var.get():
-            try:
-                cil_v = float(cil_value.cget('text'))
-            except (ValueError, TypeError, tk.TclError) as e:
-                cil_v = latest_mapped
-                EX_LIST.append(f"Error reading cil_value text in _sample_once: {e}")
+            cil_v = _parse_label_float(cil_value, latest_mapped, 'cil_value')
             data['cilindros'] = cil_v
         # Señales digitales
         if record_bypass_var.get():
@@ -225,6 +274,15 @@ def build_window(auto_close=False, close_after_ms=1000):
             data['frenado'] = 1 if not (latest_mapped == 0.0) and not (
                 latest_mando < 2.0 or emergency_tdp_active) else 0
         records.append(data)
+        # enable clear/export/graph when we have at least one record
+        try:
+            if len(records) == 1:
+                clear_btn.config(state='normal')
+                export_btn.config(state='normal')
+                view_plot_btn.config(state='normal')
+        except NameError:
+            # buttons may not exist in certain test contexts
+            pass
 
     def _recorder_loop():
         nonlocal recorder_job
@@ -232,19 +290,191 @@ def build_window(auto_close=False, close_after_ms=1000):
         recorder_job = root.after(record_interval_ms, _recorder_loop)
 
     def start_recording():
-        nonlocal recorder_job
+        nonlocal recorder_job, record_start_time, rec_time_job
         if recorder_job is None:
+            # cambiar aspecto para indicar grabación: guardar colores originales
+            try:
+                orig_colors['root_bg'] = root.cget('bg')
+                orig_colors['frame_style'] = (frame.cget('style') if 'style' in
+                                              frame.keys() else '')
+                orig_colors['tdp_box_style'] = (tdp_box.cget('style') if 'style' in
+                                                tdp_box.keys() else '')
+                orig_colors['refill_btn_style'] = (refill_btn.cget('style') if 'style' in
+                                                   refill_btn.keys() else '')
+                orig_colors['bypass_cb_style'] = (bypass_cb.cget('style') if 'style' in
+                                                  bypass_cb.keys() else '')
+                orig_colors['mando_label_style'] = (mando_label.cget('style') if 'style' in
+                                                    mando_label.keys() else '')
+                orig_colors['mando_display_style'] = (mando_display.cget('style') if 'style' in
+                                                      mando_display.keys() else '')
+                orig_colors['slider_style'] = (slider.cget('style') if 'style' in
+                                               slider.keys() else '')
+                orig_colors['marker_canvas_bg'] = (marker_canvas.cget('bg') if 'bg' in
+                                                   marker_canvas.keys() else '')
+                orig_colors['bottom_frame'] = (bottom_frame.cget('style') if 'style' in
+                                                bottom_frame.keys() else '')
+                orig_colors['right_stack_style'] = (right_stack.cget('style') if 'style' in
+                                                    right_stack.keys() else '')
+                orig_colors['box_tfa_style'] = (box_tfa.cget('style') if 'style' in
+                                                box_tfa.keys() else '')
+                orig_colors['tfa_delay_display_style'] = (tfa_delay_display.cget('style') if
+                                                          'style' in
+                                                          tfa_delay_display.keys() else '')
+                orig_colors['box_cil_style'] = (box_cil.cget('style') if 'style' in
+                                                box_cil.keys() else '')
+                orig_colors['cil_value_style'] = (cil_value.cget('style') if 'style' in
+                                                  cil_value.keys() else '')
+                orig_colors['checkbuttons_frame_style'] = (checkbuttons_frame.cget('style') if
+                                                           'style' in
+                                                           checkbuttons_frame.keys() else '')
+                orig_colors['analog_frame_style'] = (analog_frame.cget('style') if 'style' in
+                                                     analog_frame.keys() else '')
+                orig_colors['digital_frame_style'] = (digital_frame.cget('style') if 'style' in
+                                                      digital_frame.keys() else '')
+                orig_colors['bottom_buttons_frame_style'] = bottom_buttons_frame.cget('style')
+                orig_colors['start_rec_btn_style'] = (start_rec_btn.cget('style') if 'style' in
+                                                      start_rec_btn.keys() else '')
+                orig_colors['stop_rec_btn_style'] = (stop_rec_btn.cget('style') if 'style' in
+                                                     stop_rec_btn.keys() else '')
+                orig_colors['view_plot_btn_style'] = (view_plot_btn.cget('style') if 'style' in
+                                                      view_plot_btn.keys() else '')
+                orig_colors['clear_btn_style'] = (clear_btn.cget('style') if 'style' in
+                                                  clear_btn.keys() else '')
+                orig_colors['export_btn_style'] = (export_btn.cget('style') if 'style' in
+                                                   export_btn.keys() else '')
+                orig_colors['emergency_label_bg'] = (emergency_label.cget('bg') if 'bg' in
+                                                     emergency_label.keys() else '')
+                orig_colors['emergency_label_fg'] = (emergency_label.cget('fg') if 'fg' in
+                                                     emergency_label.keys() else '')
+                orig_colors['rec_time_label_bg'] = (rec_time_label.cget('bg') if 'bg' in
+                                                    rec_time_label.keys() else '')
+                orig_colors['rec_time_label_fg'] = (rec_time_label.cget('fg') if 'fg' in
+                                                    rec_time_label.keys() else '')
+            except (tk.TclError, AttributeError) as e:
+                EX_LIST.append(f"Warning: could not save original styles/colors for recording: {e}")
+            try:
+                # tratar de guardar textos/foregrounds de etiquetas principales
+                orig_colors['mando_fg'] = (mando_display.cget('foreground') if 'foreground' in
+                                           mando_display.keys() else None)
+                orig_colors['tdp_bg'] = (tdp_display.cget('bg') if 'bg' in
+                                         tdp_display.keys() else None)
+            except (tk.TclError, AttributeError) as e:
+                EX_LIST.append(f"Warning: could not save original fg/bg colors for recording: {e}")
+            try:
+                root.title('Brake simulator  [GRABANDO]')
+                # aplicar paleta oscura a toda la aplicación
+                root.configure(bg=RECORDING_ROOT_BG)
+                frame.configure(style='Recording.TFrame')
+                bottom_frame.configure(style='Recording.TFrame')
+                tdp_box.configure(style='Recording.TLabelframe')
+                refill_btn.configure(style='Recording.TButton')
+                bypass_cb.configure(style='Recording.TCheckbutton')
+                mando_label.configure(style='Recording.TLabel')
+                mando_display.configure(style='Recording.TLabel')
+                slider.configure(style='Recording.Horizontal.TScale')
+                marker_canvas.configure(bg=RECORDING_MARKER_CANVAS_BG)
+                right_stack.configure(style='Recording.TFrame')
+                box_tfa.configure(style='Recording.TLabelframe')
+                tfa_delay_display.configure(style='Recording.TLabel')
+                box_cil.configure(style='Recording.TLabelframe')
+                cil_value.configure(style='Recording.TLabel')
+                checkbuttons_frame.configure(style='Recording.TFrame')
+                analog_frame.configure(style='Recording.TLabelframe')
+                digital_frame.configure(style='Recording.TLabelframe')
+                bottom_buttons_frame.configure(style='Recording.TFrame')
+                start_rec_btn.configure(style='Recording.TButton')
+                stop_rec_btn.configure(style='Recording.TButton')
+                view_plot_btn.configure(style='Recording.TButton')
+                clear_btn.configure(style='Recording.TButton')
+                export_btn.configure(style='Recording.TButton')
+                emergency_label.configure(bg=RECORDING_EMERGENCY_BG, fg=RECORDING_FG)
+                rec_time_label.configure(bg=RECORDING_REC_TIME_BG, fg=RECORDING_FG)
+                # labels y displays a colores oscuros
+                try:
+                    mando_display.config(foreground=RECORDING_FG)
+                except (tk.TclError, AttributeError):
+                    EX_LIST.append("Warning: could not switch mando_display fg to recording color")
+                try:
+                    tdp_display.config(bg=RECORDING_TDP_BG, fg=RECORDING_TLABEL_FG)
+                except (tk.TclError, AttributeError):
+                    EX_LIST.append("Warning: could not switch tdp_display to recording colors")
+            except (tk.TclError, AttributeError) as e:
+                EX_LIST.append(f'Warning: could not switch UI to recording colors: {e}')
+
+            record_start_time = time.time()
+
+            def _update_rec_time():
+                nonlocal rec_time_job
+                if record_start_time is None:
+                    return
+                elapsed = int(time.time() - record_start_time)
+                m, s = divmod(elapsed, 60)
+                rec_time_label.config(text=f'Registro: {m:02d}:{s:02d}')
+                rec_time_job = root.after(500, _update_rec_time)
+
+            _update_rec_time()
             _recorder_loop()
             start_rec_btn.config(state='disabled')
             stop_rec_btn.config(state='normal')
 
     def stop_recording():
-        nonlocal recorder_job
+        nonlocal recorder_job, rec_time_job, record_start_time
         if recorder_job is not None:
             root.after_cancel(recorder_job)
             recorder_job = None
             start_rec_btn.config(state='normal')
-            stop_rec_btn.config(state='disabled')
+        # restaurar apariencia desde colores guardados
+        try:
+            root.title('Brake simulator')
+            root.configure(bg=orig_colors.get('root_bg', ''))
+            frame.configure(style=orig_colors.get('frame_style', ''))
+            tdp_box.configure(style=orig_colors.get('tdp_box_style', ''))
+            refill_btn.configure(style=orig_colors.get('refill_btn_style', 'Rec.TButton'))
+            bypass_cb.configure(style=orig_colors.get('bypass_cb_style', ''))
+            mando_label.configure(style=orig_colors.get('mando_label_style', ''))
+            mando_display.configure(style=orig_colors.get('mando_display_style', ''))
+            slider.configure(style=orig_colors.get('slider_style', ''))
+            marker_canvas.configure(bg=orig_colors.get('marker_canvas_bg', ''))
+            bottom_frame.configure(style=orig_colors.get('bottom_frame', ''))
+            right_stack.configure(style=orig_colors.get('right_stack_style', ''))
+            box_tfa.configure(style=orig_colors.get('box_tfa_style', ''))
+            tfa_delay_display.configure(style=orig_colors.get('tfa_delay_display_style', ''))
+            box_cil.configure(style=orig_colors.get('box_cil_style', ''))
+            cil_value.configure(style=orig_colors.get('cil_value_style', ''))
+            checkbuttons_frame.configure(style=orig_colors.get('checkbuttons_frame_style', ''))
+            analog_frame.configure(style=orig_colors.get('analog_frame_style', ''))
+            digital_frame.configure(style=orig_colors.get('digital_frame_style', ''))
+            bottom_buttons_frame.configure(style='')
+            start_rec_btn.configure(style=orig_colors.get('start_rec_btn_style', 'Rec.TButton'))
+            stop_rec_btn.configure(style=orig_colors.get('stop_rec_btn_style', 'Rec.TButton'))
+            view_plot_btn.configure(style=orig_colors.get('view_plot_btn_style', 'Rec.TButton'))
+            clear_btn.configure(style=orig_colors.get('clear_btn_style', 'Rec.TButton'))
+            export_btn.configure(style=orig_colors.get('export_btn_style', 'Rec.TButton'))
+            emergency_label.configure(bg=orig_colors.get('emergency_label_bg', EMERGENCY_RED),
+                                      fg=orig_colors.get('emergency_label_fg', EMERGENCY_WHITE))
+            rec_time_label.configure(bg=orig_colors.get('rec_time_label_bg', ''),
+                                     fg=orig_colors.get('rec_time_label_fg', DEFAULT_BLACK))
+            try:
+                if orig_colors.get('mando_fg'):
+                    mando_display.config(foreground=orig_colors.get('mando_fg'))
+            except (tk.TclError, AttributeError) as e:
+                EX_LIST.append(f"Warning: could not restore mando_display fg after recording: {e}")
+            try:
+                if orig_colors.get('tdp_bg'):
+                    tdp_display.config(bg=orig_colors.get('tdp_bg'), fg=DEFAULT_BLACK)
+            except (tk.TclError, AttributeError) as e:
+                EX_LIST.append(f"Warning: could not restore tdp_display bg/fg after recording: {e}")
+        except (tk.TclError, AttributeError) as e:
+            EX_LIST.append(f'Warning: could not restore UI after recording: {e}')
+        # detener actualizador de tiempo y resetear contador visual
+        try:
+            if rec_time_job is not None:
+                root.after_cancel(rec_time_job)
+                rec_time_job = None
+        except tk.TclError as e:
+            EX_LIST.append(f"Error cancelling rec_time_job: {e}")
+        record_start_time = None
+        rec_time_label.config(text='Registro: 00:00')
 
     def view_plot():
         if not records:
@@ -291,7 +521,7 @@ def build_window(auto_close=False, close_after_ms=1000):
             idx += 1
         # Plot TDP
         if 'tdp' in subplots_needed:
-            ax[idx].plot(times, series['tdp'], label='TDP', color='tab:blue')
+            ax[idx].plot(times, series['tdp'], label='TDP', color=PLOT_TDP_COLOR)
             ax[idx].legend()
             ax[idx].set_ylabel('TDP')
             idx += 1
@@ -299,16 +529,16 @@ def build_window(auto_close=False, close_after_ms=1000):
         if 'digital' in subplots_needed:
             if 'bypass_tdp' in series:
                 ax[idx].step(times, series['bypass_tdp'], label='Bypass TDP', where='post',
-                             color='yellow')
+                             color=PLOT_BYPASS_COLOR)
             if 'llenado_tdp' in series:
                 ax[idx].step(times, series['llenado_tdp'], label='Llenado TDP', where='post',
-                             color='blue')
+                             color=PLOT_LLENADO_COLOR)
             if 'emergencia' in series:
                 ax[idx].step(times, series['emergencia'], label='Emergencia', where='post',
-                             color='red')
+                             color=PLOT_EMERGENCIA_COLOR)
             if 'frenado' in series:
                 ax[idx].step(times, series['frenado'], label='Frenado', where='post',
-                             color='orange')
+                             color=PLOT_FRENADO_COLOR)
             ax[idx].legend()
             ax[idx].set_ylabel('señales digitales')
             ax[idx].set_yticks([0, 1])
@@ -318,6 +548,13 @@ def build_window(auto_close=False, close_after_ms=1000):
 
     def clear_records():
         records.clear()
+        # disable graph/export/clear when there are no records left
+        try:
+            view_plot_btn.config(state='disabled')
+            export_btn.config(state='disabled')
+            clear_btn.config(state='disabled')
+        except NameError:
+            pass
 
     def export_csv():
         if not records:
@@ -406,17 +643,33 @@ def build_window(auto_close=False, close_after_ms=1000):
         # 'clam' theme may not be available on all platforms; ignore Tcl errors and continue.
         EX_LIST.append("Warning: 'clam' theme not available; using default theme.")
     style.configure('Rec.TButton', padding=6)
+    # estilos para modo grabación oscura
+    style.configure('Recording.TFrame', background=RECORDING_FRAME_BG)
+    style.configure('Recording.TLabelframe', background=RECORDING_TLABELFRAME_BG,
+                    foreground=RECORDING_TLABELFRAME_FG)
+    style.configure('Recording.TLabel', foreground=RECORDING_TLABEL_FG,
+                    background=RECORDING_TLABEL_BG)
+    style.configure('Recording.TButton', background=RECORDING_BUTTON_BG,
+                    foreground=RECORDING_BUTTON_FG)
+    style.configure('Recording.TCheckbutton', foreground=RECORDING_CHECKB_FG,
+                    background=RECORDING_CHECKB_BG)
+    style.configure('Recording.Horizontal.TScale', background=RECORDING_SCALE_BG)
 
     start_rec_btn = ttk.Button(bottom_buttons_frame, text='Start', width=10,
                                style='Rec.TButton', command=start_recording)
     stop_rec_btn = ttk.Button(bottom_buttons_frame, text='Stop', width=10,
                               style='Rec.TButton', command=stop_recording, state='disabled')
+    # start with graph/export/clear disabled until we have recorded data
     view_plot_btn = ttk.Button(bottom_buttons_frame, text='Gráfica', width=10,
-                               style='Rec.TButton', command=view_plot)
+                               style='Rec.TButton', command=view_plot, state='disabled')
     clear_btn = ttk.Button(bottom_buttons_frame, text='Limpiar', width=10,
-                           style='Rec.TButton', command=clear_records)
+                           style='Rec.TButton', command=clear_records, state='disabled')
     export_btn = ttk.Button(bottom_buttons_frame, text='Exportar CSV', width=12,
-                            style='Rec.TButton', command=export_csv)
+                            style='Rec.TButton', command=export_csv, state='disabled')
+    # Label con tiempo de grabación (inicialmente 00:00)
+    rec_time_label = tk.Label(bottom_buttons_frame, text='Registro: 00:00',
+                              font=('TkDefaultFont', 10))
+    rec_time_label.pack(side='left', padx=(0,12))
     start_rec_btn.pack(side='left', padx=(0,10))
     stop_rec_btn.pack(side='left', padx=(0,10))
     view_plot_btn.pack(side='left', padx=(0,10))
@@ -429,16 +682,16 @@ def build_window(auto_close=False, close_after_ms=1000):
         """
         nonlocal latest_mando, latest_mapped, emergency_tdp_active
         if latest_mapped == 0.0:
-            emergency_label.config(text='Aflojado', bg='green', fg='white')
+            emergency_label.config(text='Aflojado', bg=EMERGENCY_GREEN, fg=EMERGENCY_WHITE)
             if not emergency_label.winfo_ismapped():
                 emergency_label.pack(fill='x', pady=(8,0))
             try:
-                mando_display.config(foreground='black')
+                mando_display.config(foreground=DEFAULT_BLACK)
             except tk.TclError:
-                mando_display.config(fg='black')
+                mando_display.config(fg=DEFAULT_BLACK)
                 EX_LIST.append("Error setting mando_display fg to black in Aflojado state")
         elif latest_mando < 2.0 or emergency_tdp_active:
-            emergency_label.config(text='EMERGENCIA', bg='red', fg='white')
+            emergency_label.config(text='EMERGENCIA', bg=EMERGENCY_RED, fg=EMERGENCY_WHITE)
             if not emergency_label.winfo_ismapped():
                 emergency_label.pack(fill='x', pady=(8,0))
             try:
@@ -448,7 +701,7 @@ def build_window(auto_close=False, close_after_ms=1000):
                 EX_LIST.append("Error setting mando_display fg to red in EMERGENCIA state")
         else:
             # Frenado (naranja)
-            emergency_label.config(text='Frenado', bg='orange', fg='black')
+            emergency_label.config(text='Frenado', bg=EMERGENCY_ORANGE, fg=DEFAULT_BLACK)
             if not emergency_label.winfo_ismapped():
                 emergency_label.pack(fill='x', pady=(8,0))
             try:
