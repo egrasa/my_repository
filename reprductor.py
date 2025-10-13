@@ -237,6 +237,27 @@ class VideoManagerApp:
         self.category_var = None
         self.category_combo = None
         self.video_tree = None
+        self.context_menu = None
+        self.preview_canvas = None
+        self.play_btn = None
+        self.generate_timeline_btn = None
+        self.preview_inner_frame = None
+        self.preview_canvas_window = None
+        self.preview_default_label = None
+        self.timeline_images = []
+        self.video_panel = None
+        self.time_label = None
+        self.progress_var = None
+        self.volume_var = None
+        self.progress_scale = None
+        self.duration_label = None
+        self.name_label = None
+        self.detail_category_var = None
+        self.detail_category_combo = None
+        self.tags_entry = None
+        self.rating_var = None
+        self.notes_text = None
+
 
         # Directorio para miniaturas
         self.thumbnail_dir = Path('thumbnails')
@@ -408,7 +429,7 @@ class VideoManagerApp:
         preview_frame.pack(side='bottom', fill='both', expand=True, padx=5, pady=5)
 
         # Botón para generar timeline de miniaturas
-        self.generate_timeline_btn = ttk.Button(preview_frame, 
+        self.generate_timeline_btn = ttk.Button(preview_frame,
                                                text="📸 Generar Timeline de Miniaturas",
                                                command=self.generate_timeline_thumbnails,
                                                state='disabled')
@@ -419,7 +440,7 @@ class VideoManagerApp:
         canvas_frame.pack(side='top', fill='both', expand=True, padx=5, pady=5)
 
         self.preview_canvas = tk.Canvas(canvas_frame, bg='#2c3e50', height=350)
-        scrollbar_preview = ttk.Scrollbar(canvas_frame, orient='vertical', 
+        scrollbar_preview = ttk.Scrollbar(canvas_frame, orient='vertical',
                                          command=self.preview_canvas.yview)
         self.preview_canvas.configure(yscrollcommand=scrollbar_preview.set)
 
@@ -432,7 +453,7 @@ class VideoManagerApp:
             0, 0, window=self.preview_inner_frame, anchor='nw')
 
         # Bind para actualizar el scrollregion
-        self.preview_inner_frame.bind('<Configure>', 
+        self.preview_inner_frame.bind('<Configure>',
                                      lambda e: self.preview_canvas.configure(
                                          scrollregion=self.preview_canvas.bbox('all')))
 
@@ -446,7 +467,7 @@ class VideoManagerApp:
         self.preview_inner_frame.bind('<Button-5>', self._on_preview_mousewheel)
 
         # Label por defecto (se mostrará cuando no hay miniaturas)
-        self.preview_default_label = tk.Label(self.preview_inner_frame, 
+        self.preview_default_label = tk.Label(self.preview_inner_frame,
                                              text="Selecciona un video\ny haz clic en el botón\n"
                                              "para generar miniaturas",
                                              bg='#2c3e50', fg='white', font=('Arial', 12))
@@ -472,7 +493,7 @@ class VideoManagerApp:
             self.video_panel = tk.Frame(video_frame, bg='black')
             self.video_panel.pack(fill='both', expand=True)
         else:
-            ttk.Label(video_frame, text="Reproductor no disponible\nInstala python-vlc", 
+            ttk.Label(video_frame, text="Reproductor no disponible\nInstala python-vlc",
                      justify='center').pack(fill='both', expand=True)
 
         # Controles de reproducción
@@ -502,8 +523,8 @@ class VideoManagerApp:
         # Volumen
         ttk.Label(controls_frame, text="🔊").pack(side='left')
         self.volume_var = tk.IntVar(value=50)
-        volume_scale = ttk.Scale(controls_frame, from_=0, to=100, 
-                                variable=self.volume_var, orient='horizontal', 
+        volume_scale = ttk.Scale(controls_frame, from_=0, to=100,
+                                variable=self.volume_var, orient='horizontal',
                                 command=self.set_volume, length=100)
         volume_scale.pack(side='left', padx=2)
 
@@ -562,7 +583,7 @@ class VideoManagerApp:
                 duration = self.get_video_duration(filepath)
                 if duration > 0:
                     self.db.update_video(video_id, duration=duration)
-                
+
                 # Generar miniatura
                 self.generate_thumbnail(filepath, video_id)
                 messagebox.askokcancel("Éxito", f"Video añadido: {os.path.basename(filepath)}")
@@ -576,7 +597,7 @@ class VideoManagerApp:
 
         if folder:
             video_extensions = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'}
-            
+
             # Primero contar todos los videos
             video_files = []
             for root, _dirs, files in os.walk(folder):
@@ -584,18 +605,18 @@ class VideoManagerApp:
                     if Path(file).suffix.lower() in video_extensions:
                         filepath = os.path.join(root, file)
                         video_files.append(filepath)
-            
+
             total = len(video_files)
-            
+
             if total == 0:
                 messagebox.askokcancel("Info", "No se encontraron videos en la carpeta")
                 return
-            
+
             # Crear ventana de progreso
             progress_dialog = ProgressDialog(self.root, "Añadiendo Videos",
                                             "Procesando videos de la carpeta...", total)
             added_count = 0
-            
+
             for idx, filepath in enumerate(video_files, 1):
                 filename = os.path.basename(filepath)
                 video_id = self.db.add_video(filepath)
@@ -669,12 +690,12 @@ class VideoManagerApp:
         """Carga los detalles de un video en el panel de detalles"""
         # Manejar tanto videos con 11 campos (viejos) como 12 campos (nuevos)
         if len(video) == 11:
-            (video_id, filepath, filename, category, tags, rating, _duration, _added_date,
+            (_video_id, _filepath, filename, category, tags, rating, _duration, _added_date,
              _last_played, _play_count, notes) = video
-            thumbnail_path = None
+            _thumbnail_path = None
         else:
-            (video_id, filepath, filename, category, tags, rating, _duration, _added_date,
-             _last_played, _play_count, notes, thumbnail_path) = video
+            (_video_id, _filepath, filename, category, tags, rating, _duration, _added_date,
+             _last_played, _play_count, notes, _thumbnail_path) = video
 
         self.name_label.config(text=filename)
         self.detail_category_var.set(category or 'public')
@@ -831,14 +852,14 @@ class VideoManagerApp:
             position = self.player.get_position()
             if position >= 0:
                 self.progress_var.set(position * 100)
-            
+
             # Actualizar tiempos
             current_time = self.player.get_time()  # En milisegundos
             total_time = self.player.get_length()  # En milisegundos
-            
+
             if current_time >= 0:
                 self.time_label.config(text=self.format_time_ms(current_time))
-            
+
             if total_time > 0:
                 self.duration_label.config(text=self.format_time_ms(total_time))
 
@@ -911,7 +932,7 @@ class VideoManagerApp:
 
             # Obtener el frame del medio del video
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # type: ignore
-            
+
             # Intentar múltiples frames si el primero falla
             frames_to_try = []
             if total_frames > 0:
@@ -928,7 +949,7 @@ class VideoManagerApp:
             for frame_pos in frames_to_try:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)  # type: ignore
                 ret, frame = cap.read()
-                
+
                 if ret and frame is not None:
                     try:
                         # Convertir de BGR (OpenCV) a RGB (PIL)
@@ -936,19 +957,40 @@ class VideoManagerApp:
                         break  # Éxito, salir del bucle
                     except Exception:
                         continue  # Intentar siguiente frame
-            
+
             cap.release()
 
             if frame_rgb is not None:
                 # Crear imagen PIL
                 img = Image.fromarray(frame_rgb)
 
-                # Redimensionar manteniendo aspecto
-                img.thumbnail((320, 180), Image.Resampling.LANCZOS)
+                # Asegurar relación de aspecto 3:2 mediante crop centrado y redimensionado
+                try:
+                    target_aspect = 3.0 / 2.0
+                    width, height = img.size
+                    current_aspect = width / height if height else 1
 
-                # Guardar miniatura
-                thumbnail_path = self.thumbnail_dir / f"thumb_{video_id}.jpg"
-                img.save(thumbnail_path, "JPEG", quality=85)
+                    if current_aspect > target_aspect:
+                        # imagen demasiado ancha -> recortar ancho
+                        new_width = int(target_aspect * height)
+                        left = (width - new_width) // 2
+                        img = img.crop((left, 0, left + new_width, height))
+                    else:
+                        # imagen demasiado alta -> recortar alto
+                        new_height = int(width / target_aspect)
+                        top = (height - new_height) // 2
+                        img = img.crop((0, top, width, top + new_height))
+
+                    # Redimensionar a 300x200 (3:2)
+                    img = img.resize((300, 200), Image.Resampling.LANCZOS)
+
+                    # Guardar miniatura
+                    thumbnail_path = self.thumbnail_dir / f"thumb_{video_id}.jpg"
+                    img.save(thumbnail_path, "JPEG", quality=85)
+                except Exception:
+                    # Fallback: intentar guardar la imagen tal cual
+                    thumbnail_path = self.thumbnail_dir / f"thumb_{video_id}.jpg"
+                    img.save(thumbnail_path, "JPEG", quality=85)
 
                 # Actualizar base de datos
                 self.db.update_video(video_id, thumbnail_path=str(thumbnail_path))
@@ -973,26 +1015,29 @@ class VideoManagerApp:
                 # Cargar imagen
                 img = Image.open(thumbnail_path)
 
-                # Crear imagen cuadrada (300x300) con crop centrado
-                width, height = img.size
+                # Crear imagen con relación 3:2 (300x200) con crop centrado
+                try:
+                    target_aspect = 3.0 / 2.0
+                    width, height = img.size
+                    current_aspect = width / height if height else 1
 
-                # Determinar el tamaño del cuadrado (el menor lado)
-                square_size = min(width, height)
+                    if current_aspect > target_aspect:
+                        # demasiado ancha -> recortar ancho
+                        new_width = int(target_aspect * height)
+                        left = (width - new_width) // 2
+                        img_cropped = img.crop((left, 0, left + new_width, height))
+                    else:
+                        # demasiado alta -> recortar alto
+                        new_height = int(width / target_aspect)
+                        top = (height - new_height) // 2
+                        img_cropped = img.crop((0, top, width, top + new_height))
 
-                # Calcular coordenadas para crop centrado
-                left = (width - square_size) // 2
-                top = (height - square_size) // 2
-                right = left + square_size
-                bottom = top + square_size
-
-                # Hacer crop cuadrado
-                img_square = img.crop((left, top, right, bottom))
-
-                # Redimensionar a 300x300
-                img_square = img_square.resize((300, 300), Image.Resampling.LANCZOS)
-
-                # Convertir a PhotoImage
-                photo = ImageTk.PhotoImage(img_square)
+                    img_resized = img_cropped.resize((300, 200), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img_resized)
+                except Exception:
+                    # Fallback to original resize centered
+                    img.thumbnail((300, 200), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
 
                 # Mostrar en label
                 self.preview_label.config(image=photo, text="")
@@ -1019,13 +1064,13 @@ class VideoManagerApp:
 
         videos = self.db.get_all_videos()
         total = len(videos)
-        
+
         if total == 0:
             messagebox.askokcancel("Info", "No hay videos en la biblioteca")
             return
-        
+
         # Crear ventana de progreso
-        progress_dialog = ProgressDialog(self.root, "Generando Miniaturas", 
+        progress_dialog = ProgressDialog(self.root, "Generando Miniaturas",
                                         "Procesando videos...", total)
         generated = 0
 
@@ -1060,23 +1105,23 @@ class VideoManagerApp:
             return
 
         videos = self.db.get_all_videos()
-        
+
         # Filtrar solo videos sin duración
         videos_to_process = []
         for video in videos:
             video_id = video[0]
             filepath = video[1]
             current_duration = video[6] if len(video) > 6 else 0
-            
+
             if (current_duration is None or current_duration == 0) and os.path.exists(filepath):
                 videos_to_process.append(video)
-        
+
         total = len(videos_to_process)
-        
+
         if total == 0:
             messagebox.askokcancel("Info", "Todos los videos ya tienen duración calculada")
             return
-        
+
         # Crear ventana de progreso
         progress_dialog = ProgressDialog(self.root, "Calculando Duraciones",
                                         "Procesando videos...", total)
@@ -1086,12 +1131,13 @@ class VideoManagerApp:
             video_id = video[0]
             filepath = video[1]
             filename = video[2]
-            
+
             duration = self.get_video_duration(filepath)
             if duration > 0:
                 self.db.update_video(video_id, duration=duration)
                 calculated += 1
-                progress_dialog.update(idx, f"Calculado: {filename[:30]}... ({self.format_duration(duration)})")
+                progress_dialog.update(idx, f"Calculado: {filename[:30]}..."
+                                       f" ({self.format_duration(duration)})")
             else:
                 progress_dialog.update(idx, f"Error: {filename[:30]}...")
 
@@ -1126,9 +1172,9 @@ class VideoManagerApp:
         if not self.current_video:
             return
 
-        video_id = self.current_video[0]
+        _video_id = self.current_video[0]
         filepath = self.current_video[1]
-        filename = self.current_video[2]
+        _filename = self.current_video[2]
 
         if not os.path.exists(filepath):
             messagebox.showerror("Error", "El archivo de video no existe")
@@ -1156,15 +1202,15 @@ class VideoManagerApp:
                                      f" del video (fps={fps}, frames={total_frames_f})")
                 print(f"Error: fps={fps}, total_frames={total_frames_f}")
                 return
-            
+
             duration_seconds = total_frames / fps
             duration_hours = duration_seconds / 3600
-            
+
             # Calcular número de miniaturas (6 por hora, mínimo 4)
             num_thumbnails = max(4, int(duration_hours * 6))
             # Duplicar la cantidad solicitada (según petición) y capear a 48
             num_thumbnails = min(num_thumbnails * 2, 48)
-            
+
             # Limpiar vista previa anterior
             self.clear_timeline_preview()
 
@@ -1186,13 +1232,13 @@ class VideoManagerApp:
                 messagebox.showwarning("Advertencia", "Número de miniaturas calculado es 0")
                 return
             frame_interval = max(1, total_frames // (num_thumbnails + 1))
-            
+
             thumbnails = []
             for i in range(1, num_thumbnails + 1):
                 frame_pos = i * frame_interval
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)  # type: ignore
                 ret, frame = cap.read()
-                
+
                 if ret and frame is not None:
                     try:
                         # Convertir a RGB
@@ -1203,57 +1249,69 @@ class VideoManagerApp:
                         # Omitir frame problemático
                         print(f"Warning: fallo procesando frame {frame_pos}: {e}")
                         continue
-                    
-                    # Crear imagen cuadrada con crop centrado
-                    width, height = img.size
-                    square_size = min(width, height)
-                    left = (width - square_size) // 2
-                    top = (height - square_size) // 2
-                    img_square = img.crop((left, top, left + square_size, top + square_size))
-                    
-                    # Redimensionar a 150x150 (formato cuadrado)
-                    img_square = img_square.resize((150, 150), Image.Resampling.LANCZOS)
-                    
+
+                    # Crear imagen con relación 3:2 (centrado) y redimensionar a 150x100
+                    try:
+                        target_aspect = 3.0 / 2.0
+                        width, height = img.size
+                        current_aspect = width / height if height else 1
+
+                        if current_aspect > target_aspect:
+                            # demasiado ancha -> recortar ancho
+                            new_width = int(target_aspect * height)
+                            left = (width - new_width) // 2
+                            img_cropped = img.crop((left, 0, left + new_width, height))
+                        else:
+                            # demasiado alta -> recortar alto
+                            new_height = int(width / target_aspect)
+                            top = (height - new_height) // 2
+                            img_cropped = img.crop((0, top, width, top + new_height))
+
+                        img_resized = img_cropped.resize((150, 100), Image.Resampling.LANCZOS)
+                    except Exception as e:
+                        print(f"Warning: fallback while creating timeline thumb: {e}")
+                        img_resized = img.resize((150, 100), Image.Resampling.LANCZOS)
+
                     # Calcular tiempo de esta miniatura
                     time_seconds = frame_pos / fps
                     time_str = self.format_duration(int(time_seconds))
-                    
-                    thumbnails.append((img_square, time_str))
-            
+
+                    thumbnails.append((img_resized, time_str))
+
             cap.release()
-            
+
             # Limpiar contenedor de progreso antes de insertar miniaturas
             try:
                 progress_container.destroy()
             except Exception:
                 # Si no existe, ignorar
                 pass
-            
+
             if not thumbnails:
                 messagebox.showwarning("Advertencia", "No se pudieron generar miniaturas")
                 self.clear_timeline_preview()
                 return
-            
+
             # Crear grid de miniaturas (hasta ncols por fila)
             for idx, (img, time_str) in enumerate(thumbnails):
                 row = idx // ncols
                 col = idx % ncols
-                
+
                 # Frame para cada miniatura
-                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e', 
+                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e',
                                       relief='raised', borderwidth=2)
                 thumb_frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
-                
+
                 # Convertir a PhotoImage
                 photo = ImageTk.PhotoImage(img)
                 self.timeline_images.append(photo)  # Guardar referencia
-                
+
                 # Label con la imagen
                 img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
                 img_label.pack(padx=2, pady=2)
-                
+
                 # Label con el tiempo
-                time_label = tk.Label(thumb_frame, text=time_str, 
+                time_label = tk.Label(thumb_frame, text=time_str,
                                      bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
                 time_label.pack()
 
