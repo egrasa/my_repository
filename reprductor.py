@@ -6,6 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+import math
 from PIL import Image, ImageTk
 import cv2
 import vlc
@@ -178,8 +179,23 @@ class VideoDatabase:
 
         cursor = self.conn.cursor()
 
-        set_clause = ', '.join([f'{key} = ?' for key in kwargs.keys()])
-        values = list(kwargs.values()) + [video_id]
+        # Lista blanca de columnas permitidas para actualizar
+        allowed_columns = {
+            'filepath', 'filename', 'category', 'tags', 'rating', 'duration'}
+
+        # Filtrar solo claves válidas
+        safe_kwargs = {k: v for k, v in kwargs.items() if k in allowed_columns}
+        if not safe_kwargs:
+            return  # No hay campos válidos para actualizar
+        set_clause = ', '.join([f'{key} = ?' for key in safe_kwargs.keys()])
+        values = list(safe_kwargs.values()) + [video_id]
+
+        cursor.execute(f'UPDATE videos SET {set_clause} WHERE id = ?', values)
+        if cursor.rowcount > 0:
+            self.conn.commit()
+        else:
+            print(f"Warning: No video found with id {video_id} to update.")
+
 
         cursor.execute(f'UPDATE videos SET {set_clause} WHERE id = ?', values)
         self.conn.commit()
@@ -217,6 +233,10 @@ class VideoManagerApp:
 
         # Base de datos
         self.db = VideoDatabase()
+        self.search_var = None
+        self.category_var = None
+        self.category_combo = None
+        self.video_tree = None
 
         # Directorio para miniaturas
         self.thumbnail_dir = Path('thumbnails')
@@ -1130,7 +1150,6 @@ class VideoManagerApp:
                 total_frames = 0
 
             # Validar fps y frame count
-            import math
             if not (math.isfinite(fps) and fps > 0) or total_frames <= 0:
                 cap.release()
                 messagebox.showerror("Error", f"No se pudo obtener información"
