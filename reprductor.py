@@ -239,6 +239,7 @@ class VideoManagerApp:
         self.video_tree = None
         self.context_menu = None
         self.preview_canvas = None
+        self.preview_label = None
         self.play_btn = None
         self.generate_timeline_btn = None
         self.preview_inner_frame = None
@@ -296,7 +297,7 @@ class VideoManagerApp:
                     duration = frame_count / fps
                     return int(duration)
             return 0
-        except Exception:
+        except (cv2.error, OSError, ValueError, AttributeError):
             return 0
 
     @staticmethod
@@ -473,6 +474,8 @@ class VideoManagerApp:
                                              bg='#2c3e50', fg='white', font=('Arial', 12))
         # Use grid inside preview_inner_frame to avoid mixing with grid-used thumbnails
         self.preview_default_label.grid(row=0, column=0, sticky='nsew', pady=50)
+        # Keep a persistent reference used by load_thumbnail
+        self.preview_label = self.preview_default_label
         # Ensure the inner frame expands the single cell so the label centers
         self.preview_inner_frame.grid_rowconfigure(0, weight=1)
         self.preview_inner_frame.grid_columnconfigure(0, weight=1)
@@ -769,13 +772,13 @@ class VideoManagerApp:
         current_media = self.player.get_media()
         try:
             current_mrl = current_media.get_mrl() if current_media is not None else None
-        except Exception:
+        except (AttributeError, TypeError):
             current_mrl = None
 
         # URI del archivo seleccionado
         try:
             selected_mrl = Path(selected_filepath).as_uri()
-        except Exception:
+        except (ValueError, OSError):
             selected_mrl = None
 
         # Si el media cargado corresponde al seleccionado, simplemente reanudar
@@ -955,7 +958,8 @@ class VideoManagerApp:
                         # Convertir de BGR (OpenCV) a RGB (PIL)
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
                         break  # Éxito, salir del bucle
-                    except Exception:
+                    except (cv2.error, ValueError, TypeError, AttributeError):
+                        # Ignorar frames problemáticos y probar el siguiente
                         continue  # Intentar siguiente frame
 
             cap.release()
@@ -987,8 +991,8 @@ class VideoManagerApp:
                     # Guardar miniatura
                     thumbnail_path = self.thumbnail_dir / f"thumb_{video_id}.jpg"
                     img.save(thumbnail_path, "JPEG", quality=85)
-                except Exception:
-                    # Fallback: intentar guardar la imagen tal cual
+                except (OSError, ValueError, AttributeError):
+                    # Fallback: intentar guardar la imagen tal cual en caso de errores esperados
                     thumbnail_path = self.thumbnail_dir / f"thumb_{video_id}.jpg"
                     img.save(thumbnail_path, "JPEG", quality=85)
 
@@ -1000,8 +1004,9 @@ class VideoManagerApp:
                 # Silencioso: el video puede estar corrupto
                 return None
 
-        except Exception:
-            # Silencioso: manejo robusto de errores
+        except (cv2.error, OSError, ValueError) as e:
+            # Manejo robusto de errores específicos (OpenCV, archivos, valores)
+            print(f"Error generando miniatura: {e}")
             return None
 
     def load_thumbnail(self, video_id, thumbnail_path, video_path):
@@ -1034,7 +1039,7 @@ class VideoManagerApp:
 
                     img_resized = img_cropped.resize((300, 200), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(img_resized)
-                except Exception:
+                except (OSError, ValueError, AttributeError):
                     # Fallback to original resize centered
                     img.thumbnail((300, 200), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
@@ -1156,14 +1161,17 @@ class VideoManagerApp:
 
         # Limpiar referencias a imágenes
         self.timeline_images.clear()
-
-        # Mostrar mensaje por defecto
         self.preview_default_label = tk.Label(self.preview_inner_frame,
                                              text="Selecciona un video\ny haz clic en el botón\n"
                                              "para generar miniaturas",
                                              bg='#2c3e50', fg='white', font=('Arial', 12))
         # Use grid to match thumbnail grid placement
         self.preview_default_label.grid(row=0, column=0, sticky='nsew', pady=50)
+        # Ensure the inner frame expands the single cell so the label centers
+        self.preview_inner_frame.grid_rowconfigure(0, weight=1)
+        self.preview_inner_frame.grid_columnconfigure(0, weight=1)
+        # Keep a persistent reference used by load_thumbnail (recreated when clearing)
+        self.preview_label = self.preview_default_label
         self.preview_inner_frame.grid_rowconfigure(0, weight=1)
         self.preview_inner_frame.grid_columnconfigure(0, weight=1)
 
@@ -1192,7 +1200,7 @@ class VideoManagerApp:
             total_frames_f = cap.get(cv2.CAP_PROP_FRAME_COUNT)  # type: ignore
             try:
                 total_frames = int(total_frames_f)
-            except Exception:
+            except (TypeError, ValueError):
                 total_frames = 0
 
             # Validar fps y frame count
@@ -1245,8 +1253,8 @@ class VideoManagerApp:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
                         # Crear imagen PIL
                         img = Image.fromarray(frame_rgb)
-                    except Exception as e:
-                        # Omitir frame problemático
+                    except (cv2.error, ValueError, TypeError) as e:
+                        # Omitir frame problemático (errores de OpenCV o creación de imagen)
                         print(f"Warning: fallo procesando frame {frame_pos}: {e}")
                         continue
 
@@ -1268,7 +1276,8 @@ class VideoManagerApp:
                             img_cropped = img.crop((0, top, width, top + new_height))
 
                         img_resized = img_cropped.resize((150, 100), Image.Resampling.LANCZOS)
-                    except Exception as e:
+                    except (ValueError, OSError, AttributeError) as e:
+                        # Fallback a un resize directo si el crop/resize falla por errores esperados
                         print(f"Warning: fallback while creating timeline thumb: {e}")
                         img_resized = img.resize((150, 100), Image.Resampling.LANCZOS)
 
@@ -1283,8 +1292,8 @@ class VideoManagerApp:
             # Limpiar contenedor de progreso antes de insertar miniaturas
             try:
                 progress_container.destroy()
-            except Exception:
-                # Si no existe, ignorar
+            except (tk.TclError, AttributeError):
+                # Si el widget ya fue destruido o no tiene el método, ignorar
                 pass
 
             if not thumbnails:
@@ -1319,10 +1328,10 @@ class VideoManagerApp:
             for c in range(ncols):
                 self.preview_inner_frame.grid_columnconfigure(c, weight=1)
 
-            messagebox.askokcancel("Éxito", 
-                              f"Se generaron {len(thumbnails)} miniaturas del timeline")
+            messagebox.askokcancel("Éxito",
+                                   f"Se generaron {len(thumbnails)} miniaturas del timeline")
 
-        except Exception as e:
+        except (OSError, ValueError, tk.TclError) as e:
             messagebox.showerror("Error", f"Error generando timeline: {e}")
             print(f"Error generando timeline: {e}")
             self.clear_timeline_preview()
@@ -1341,9 +1350,10 @@ class VideoManagerApp:
                     self.preview_canvas.yview_scroll(-3, 'units')
                 elif event.num == 5:
                     self.preview_canvas.yview_scroll(3, 'units')
-        except Exception:
-            # Defensive: ignore any odd events
-            pass
+        except (AttributeError, tk.TclError, ValueError) as e:
+            # Catch only expected exceptions raised during event handling / canvas operations
+            print(f"Error handling mouse wheel event: {e}")
+
 
     def on_closing(self):
         """Maneja el cierre de la aplicación"""
