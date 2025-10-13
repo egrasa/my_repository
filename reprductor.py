@@ -5,6 +5,16 @@ from tkinter import ttk, filedialog, messagebox
 import os
 import sqlite3
 from pathlib import Path
+try:
+    # When package-installed or used as a module
+    from .version import get_version
+except Exception:
+    # Fallback when running as a script (tests running from tests/)
+    try:
+        from version import get_version
+    except Exception:
+        def get_version():
+            return '0.0.0'
 from datetime import datetime
 import math
 from PIL import Image, ImageTk
@@ -181,7 +191,7 @@ class VideoDatabase:
 
         # Lista blanca de columnas permitidas para actualizar
         allowed_columns = {
-            'filepath', 'filename', 'category', 'tags', 'rating', 'duration'}
+            'filepath', 'filename', 'category', 'tags', 'rating', 'duration', 'notes', 'thumbnail_path'}
 
         # Filtrar solo claves válidas
         safe_kwargs = {k: v for k, v in kwargs.items() if k in allowed_columns}
@@ -190,15 +200,13 @@ class VideoDatabase:
         set_clause = ', '.join([f'{key} = ?' for key in safe_kwargs.keys()])
         values = list(safe_kwargs.values()) + [video_id]
 
+
         cursor.execute(f'UPDATE videos SET {set_clause} WHERE id = ?', values)
         if cursor.rowcount > 0:
             self.conn.commit()
         else:
+            # No se encontró el video; registrar advertencia pero no fallar
             print(f"Warning: No video found with id {video_id} to update.")
-
-
-        cursor.execute(f'UPDATE videos SET {set_clause} WHERE id = ?', values)
-        self.conn.commit()
 
     def delete_video(self, video_id):
         """Elimina un video de la base de datos"""
@@ -228,7 +236,9 @@ class VideoManagerApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Gestor de Videos")
+        # Mostrar versión en el título
+        version = get_version()
+        self.root.title(f"Gestor de Videos v{version}")
         self.root.geometry("1200x700")
 
         # Base de datos
@@ -336,6 +346,15 @@ class VideoManagerApp:
 
     def build_ui(self):
         """Construye la interfaz de usuario"""
+        # Menu con About (muestra versión)
+        try:
+            menubar = tk.Menu(self.root)
+            help_menu = tk.Menu(menubar, tearoff=0)
+            help_menu.add_command(label=f"About (v{get_version()})", command=self.show_about)
+            menubar.add_cascade(label="Help", menu=help_menu)
+            self.root.config(menu=menubar)
+        except Exception:
+            pass
         # Panel principal dividido
         self.paned = ttk.PanedWindow(self.root, orient='horizontal')
         self.paned.pack(fill='both', expand=True)
@@ -403,11 +422,16 @@ class VideoManagerApp:
         scrollbar.config(command=self.video_tree.yview)
 
         # Columnas
-        self.video_tree.heading('#0', text='ID')
-        self.video_tree.heading('filename', text='Nombre')
-        self.video_tree.heading('duration', text='Duración')
-        self.video_tree.heading('category', text='Categoría')
-        self.video_tree.heading('rating', text='Rating ⭐')
+        # Make headings clickable to sort columns
+        self.video_tree.heading('#0', text='ID', command=lambda: self.sort_treeview('#0'))
+        self.video_tree.heading('filename', text='Nombre', command=lambda: self.sort_treeview(
+            'filename'))
+        self.video_tree.heading('duration', text='Duración', command=lambda: self.sort_treeview(
+            'duration'))
+        self.video_tree.heading('category', text='Categoría', command=lambda: self.sort_treeview(
+            'category'))
+        self.video_tree.heading('rating', text='Rating ⭐', command=lambda: self.sort_treeview(
+            'rating'))
 
         self.video_tree.column('#0', width=50)
         self.video_tree.column('filename', width=200)
@@ -428,6 +452,17 @@ class VideoManagerApp:
 
         self.video_tree.bind('<Button-3>', self.show_context_menu)
 
+        # Keep track of sort order per column
+        self._treeview_sort_state = {}
+        # Store base heading labels so we can append ▲/▼ indicators
+        self._treeview_heading_labels = {
+            '#0': 'ID',
+            'filename': 'Nombre',
+            'duration': 'Duración',
+            'category': 'Categoría',
+            'rating': 'Rating ⭐'
+        }
+
         # Frame para preview/thumbnail (en la parte inferior del panel de biblioteca)
         preview_frame = ttk.LabelFrame(library_frame, text="Vista Previa")
         preview_frame.pack(side='bottom', fill='both', expand=True, padx=5, pady=5)
@@ -438,6 +473,13 @@ class VideoManagerApp:
                                                command=self.generate_timeline_thumbnails,
                                                state='disabled')
         self.generate_timeline_btn.pack(side='top', pady=5)
+
+        # Botón para añadir 4 miniaturas adicionales (si duración > 15 minutos)
+        self.add_four_btn = ttk.Button(preview_frame,
+                                       text="➕ Añadir 4 miniaturas (si >15min)",
+                                       command=self.add_four_more_thumbnails_if_long,
+                                       state='disabled')
+        self.add_four_btn.pack(side='top', pady=2)
 
         # Canvas con scrollbar para miniaturas múltiples
         canvas_frame = ttk.Frame(preview_frame)
@@ -510,8 +552,10 @@ class VideoManagerApp:
         self.play_btn.pack(side='left', padx=2)
 
         # Seek buttons: retroceder/avanzar 10 segundos
-        ttk.Button(controls_frame, text="⏪ -10s", command=lambda: self.seek_relative(-10)).pack(side='left', padx=2)
-        ttk.Button(controls_frame, text="⏩ +10s", command=lambda: self.seek_relative(10)).pack(side='left', padx=2)
+        ttk.Button(controls_frame, text="⏪ -10s", command=lambda: self.seek_relative(
+            -10)).pack(side='left', padx=2)
+        ttk.Button(controls_frame, text="⏩ +10s", command=lambda: self.seek_relative(
+            10)).pack(side='left', padx=2)
 
         ttk.Button(controls_frame, text="⏹ Stop", command=self.stop_video).pack(side='left', padx=2)
 
@@ -543,13 +587,20 @@ class VideoManagerApp:
                                 command=self.set_volume, length=100)
         volume_scale.pack(side='left', padx=2)
 
-        # Keyboard shortcuts para seek: flecha izquierda/derecha
+        # Keyboard shortcuts using Ctrl modifier:
+        # Ctrl+J -> retroceder 10s, Ctrl+K or Ctrl+Space -> play/pause, Ctrl+L -> avanzar 10s
         try:
-            # Bindings accept an event argument; use lambdas to call seek_relative
-            self.root.bind('<Left>', lambda e: self.seek_relative(-10))
-            self.root.bind('<Right>', lambda e: self.seek_relative(10))
+            # Use Control-<key> bindings so modifiers are required
+            self.root.bind('<Control-j>', lambda e: self.seek_relative(-10))
+            self.root.bind('<Control-J>', lambda e: self.seek_relative(-10))
+            self.root.bind('<Control-k>', lambda e: self.play_pause())
+            self.root.bind('<Control-K>', lambda e: self.play_pause())
+            # Allow Ctrl+Space as an alternative to toggle play/pause
+            self.root.bind('<Control-space>', lambda e: self.play_pause())
+            self.root.bind('<Control-l>', lambda e: self.seek_relative(10))
+            self.root.bind('<Control-L>', lambda e: self.seek_relative(10))
         except Exception:
-            # Si falla el binding por alguna razón, no bloquear la UI
+            # If binding fails, don't block the UI
             pass
 
         # Panel de detalles
@@ -1036,6 +1087,85 @@ class VideoManagerApp:
             self.video_tree.selection_set(item)
             self.context_menu.post(event.x_root, event.y_root)
 
+    def sort_treeview(self, col):
+        """Ordena la Treeview por la columna `col`, alternando asc/desc."""
+        try:
+            # Obtener items actuales
+            items = [(self.video_tree.set(k, col) if col != '#0' else k, k) for k in self.video_tree.get_children('')]
+
+            # Detectar si la columna es numérica (duration o rating or id)
+            def try_float(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return None
+
+            parsed = []
+            for val, k in items:
+                if col == '#0':
+                    # id is from item id (string), try int
+                    try:
+                        parsed.append((int(val), k))
+                    except Exception:
+                        parsed.append((val, k))
+                else:
+                    # remove non-digit chars for duration like 00:03:12 -> compute seconds
+                    if col == 'duration':
+                        # Try to parse duration format HH:MM:SS or MM:SS
+                        try:
+                            parts = val.split(':')
+                            parts = [int(p) for p in parts]
+                            seconds = 0
+                            if len(parts) == 3:
+                                seconds = parts[0]*3600 + parts[1]*60 + parts[2]
+                            elif len(parts) == 2:
+                                seconds = parts[0]*60 + parts[1]
+                            else:
+                                seconds = int(val)
+                            parsed.append((seconds, k))
+                        except Exception:
+                            parsed.append((val, k))
+                    else:
+                        f = try_float(val)
+                        if f is not None:
+                            parsed.append((f, k))
+                        else:
+                            parsed.append((val.lower() if isinstance(val, str) else val, k))
+
+            # Determine current sort order and toggle
+            asc = self._treeview_sort_state.get(col, True)
+            parsed.sort(key=lambda x: x[0], reverse=not asc)
+
+            # Reorder items
+            for index, (_v, k) in enumerate(parsed):
+                self.video_tree.move(k, '', index)
+
+            # Update header indicators (▲ for asc, ▼ for desc)
+            try:
+                self._update_treeview_header_indicators(col, asc)
+            except Exception:
+                pass
+
+            # Toggle for next click
+            self._treeview_sort_state[col] = not asc
+        except Exception:
+            # If any problem, quietly ignore (do not crash UI)
+            pass
+
+    def _update_treeview_header_indicators(self, active_col, asc):
+        """Update the column headers to show ▲/▼ for the active sorted column."""
+        try:
+            for c, base_label in self._treeview_heading_labels.items():
+                if c == active_col:
+                    indicator = '▲' if asc else '▼'
+                    text = f"{base_label} {indicator}"
+                else:
+                    text = base_label
+                # For the tree column '#0', heading expects text arg
+                self.video_tree.heading(c, text=text)
+        except Exception:
+            pass
+
     def generate_thumbnail(self, video_path, video_id):
         """Genera una miniatura del video usando OpenCV (más confiable que VLC)"""
         try:
@@ -1071,7 +1201,7 @@ class VideoManagerApp:
                         # Convertir de BGR (OpenCV) a RGB (PIL)
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
                         break  # Éxito, salir del bucle
-                    except (cv2.error, ValueError, TypeError, AttributeError):
+                    except (ValueError, TypeError, AttributeError):
                         # Ignorar frames problemáticos y probar el siguiente
                         continue  # Intentar siguiente frame
 
@@ -1400,6 +1530,12 @@ class VideoManagerApp:
 
                     thumbnails.append((img_resized, time_str))
 
+                    # Save the frame positions for potential 'add more' operations
+                    try:
+                        self.last_timeline_frame_positions = [i * frame_interval for i in range(1, num_thumbnails + 1)]
+                    except Exception:
+                        self.last_timeline_frame_positions = []
+
             cap.release()
 
             # Limpiar contenedor de progreso antes de insertar miniaturas
@@ -1436,6 +1572,15 @@ class VideoManagerApp:
                 time_label = tk.Label(thumb_frame, text=time_str,
                                      bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
                 time_label.pack()
+
+            # Enable the add-four button if the video is long enough
+            try:
+                if duration_seconds > 15 * 60:
+                    self.add_four_btn.config(state='normal')
+                else:
+                    self.add_four_btn.config(state='disabled')
+            except Exception:
+                pass
 
             # Configurar grid para centrar: dar peso a cada columna
             for c in range(ncols):
@@ -1474,6 +1619,231 @@ class VideoManagerApp:
             self.player.stop()
         self.db.close()
         self.root.destroy()
+
+    def add_four_more_thumbnails_if_long(self):
+        """Añade 4 miniaturas adicionales si la duración del video es > 15 minutos.
+        Las miniaturas se generan y se añaden a la vista previa existente.
+        """
+        if not self.current_video:
+            return
+
+        filepath = self.current_video[1]
+        if not os.path.exists(filepath):
+            messagebox.showerror("Error", "El archivo de video no existe")
+            return
+
+        try:
+            cap = cv2.VideoCapture(filepath)  # type: ignore
+            if not cap.isOpened():
+                messagebox.showerror("Error", "No se pudo abrir el video")
+                return
+
+            fps = cap.get(cv2.CAP_PROP_FPS)  # type: ignore
+            total_frames_f = cap.get(cv2.CAP_PROP_FRAME_COUNT)  # type: ignore
+            try:
+                total_frames = int(total_frames_f)
+            except Exception:
+                total_frames = 0
+
+            if not (math.isfinite(fps) and fps > 0) or total_frames <= 0:
+                cap.release()
+                messagebox.showerror("Error", "No se pudo obtener información del video")
+                return
+
+            duration_seconds = total_frames / fps
+            if duration_seconds <= 15 * 60:
+                messagebox.askokcancel("Info",
+                                       "La duración no supera los 15 minutos"
+                                       " (no se añadirán miniaturas)")
+                cap.release()
+                return
+
+            # Determine candidate frame positions for 4 new thumbs
+            existing = getattr(self, 'last_timeline_frame_positions', []) or []
+
+            new_positions = []
+            if existing:
+                # compute midpoints between existing frames where possible
+                pairs = []
+                for i in range(len(existing) - 1):
+                    a = existing[i]
+                    b = existing[i + 1]
+                    pairs.append((a + b) // 2)
+                # If not enough midpoints, supplement with evenly spaced frames
+                for p in pairs:
+                    if len(new_positions) >= 4:
+                        break
+                    if p not in existing and p not in new_positions:
+                        new_positions.append(int(p))
+
+            # Fill remaining positions evenly across the video (avoid duplicates)
+            i = 1
+            while len(new_positions) < 4 and i <= 20:
+                candidate = (i * total_frames) // 20
+                if candidate > 0 and candidate not in existing and candidate not in new_positions:
+                    new_positions.append(int(candidate))
+                i += 1
+
+            # Limit to 4
+            new_positions = new_positions[:4]
+
+            if not new_positions:
+                messagebox.askokcancel("Info",
+                                       "No se encontraron posiciones nuevas"
+                                       " para generar miniaturas")
+                cap.release()
+                return
+
+            # Build a mapping of frame_pos -> PhotoImage/time for both existing and new thumbnails
+            ncols = 4
+
+            existing = getattr(self, 'last_timeline_frame_positions', []) or []
+            existing_photos = list(self.timeline_images)
+
+            # Try to map existing positions to existing PhotoImage objects only if lengths match
+            pos_to_photo = {}
+            try:
+                if len(existing) == len(existing_photos) and len(existing) > 0:
+                    for p, ph in zip(existing, existing_photos):
+                        pos_to_photo[int(p)] = ph
+                else:
+                    # If mismatch, rebuild mapping conservatively by ignoring existing photos
+                    pos_to_photo = {}
+            except Exception:
+                pos_to_photo = {}
+
+            # Generate photos for the new positions and add to mapping
+            generated_photos = {}
+            for frame_pos in new_positions:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)  # type: ignore
+                ret, frame = cap.read()
+                if not (ret and frame is not None):
+                    continue
+                try:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
+                    img = Image.fromarray(frame_rgb)
+                except Exception:
+                    continue
+
+                # Crop to 3:2 and resize to 150x100
+                try:
+                    target_aspect = 3.0 / 2.0
+                    width, height = img.size
+                    current_aspect = width / height if height else 1
+                    if current_aspect > target_aspect:
+                        new_width = int(target_aspect * height)
+                        left = (width - new_width) // 2
+                        img_cropped = img.crop((left, 0, left + new_width, height))
+                    else:
+                        new_height = int(width / target_aspect)
+                        top = (height - new_height) // 2
+                        img_cropped = img.crop((0, top, width, top + new_height))
+                    img_resized = img_cropped.resize((150, 100), Image.Resampling.LANCZOS)
+                except Exception:
+                    img_resized = img.resize((150, 100), Image.Resampling.LANCZOS)
+
+                photo = ImageTk.PhotoImage(img_resized)
+                generated_photos[int(frame_pos)] = photo
+
+            cap.release()
+
+            # Merge existing positions and new positions, deduplicate and sort chronologically
+            try:
+                merged_positions = sorted(set([
+                    int(p) for p in existing] + [int(p) for p in new_positions]))
+            except Exception:
+                merged_positions = sorted(list(set(existing + new_positions)))
+
+            if not merged_positions:
+                messagebox.askokcancel("Info", "No se añadieron miniaturas nuevas")
+                return
+
+            # Clear the preview area and rebuild thumbnails in chronological order
+            for widget in self.preview_inner_frame.winfo_children():
+                widget.destroy()
+
+            self.timeline_images = []
+
+            for idx, frame_pos in enumerate(merged_positions):
+                row = idx // ncols
+                col = idx % ncols
+
+                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e',
+                                       relief='raised', borderwidth=2)
+                thumb_frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
+
+                # Prefer existing photo mapping; else use generated photo; else skip
+                photo = pos_to_photo.get(int(frame_pos)) or generated_photos.get(int(frame_pos))
+                if not photo:
+                    # As fallback, attempt to re-extract the frame now (best-effort)
+                    try:
+                        cap2 = cv2.VideoCapture(filepath)  # type: ignore
+                        cap2.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)  # type: ignore
+                        ret2, frame2 = cap2.read()
+                        cap2.release()
+                        if ret2 and frame2 is not None:
+                            frame_rgb2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)  # type: ignore
+                            img2 = Image.fromarray(frame_rgb2)
+                            # Crop/resize
+                            t_aspect = 3.0 / 2.0
+                            w2, h2 = img2.size
+                            if (w2 / h2 if h2 else 1) > t_aspect:
+                                new_w2 = int(t_aspect * h2)
+                                left2 = (w2 - new_w2) // 2
+                                img_cropped2 = img2.crop((left2, 0, left2 + new_w2, h2))
+                            else:
+                                new_h2 = int(w2 / t_aspect)
+                                top2 = (h2 - new_h2) // 2
+                                img_cropped2 = img2.crop((0, top2, w2, top2 + new_h2))
+                            img_resized2 = img_cropped2.resize((150, 100), Image.Resampling.LANCZOS)
+                            photo = ImageTk.PhotoImage(img_resized2)
+                        else:
+                            continue
+                    except Exception:
+                        continue
+
+                self.timeline_images.append(photo)
+
+                img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
+                img_label.pack(padx=2, pady=2)
+
+                # Compute and show time label
+                try:
+                    time_seconds = frame_pos / fps
+                    time_str = self.format_duration(int(time_seconds))
+                except Exception:
+                    time_str = "00:00"
+
+                time_label = tk.Label(thumb_frame, text=time_str, bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
+                time_label.pack()
+
+            # Update stored frame positions
+            try:
+                self.last_timeline_frame_positions = merged_positions
+            except Exception:
+                self.last_timeline_frame_positions = merged_positions
+
+            # Ensure grid columns have weight
+            for c in range(ncols):
+                try:
+                    self.preview_inner_frame.grid_columnconfigure(c, weight=1)
+                except Exception:
+                    pass
+
+            messagebox.askokcancel("Éxito", f"Se añadieron {len(new_positions)} miniaturas")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error generando miniaturas adicionales: {e}")
+            cap.release()
+
+    def show_about(self):
+        """Muestra un diálogo About con la versión de la aplicación."""
+        try:
+            version = get_version()
+            messagebox.showinfo("About",
+                                f"Gestor de Videos\nVersion: {version}\n\nDesarrollado con Python/Tkinter")
+        except Exception:
+            messagebox.showinfo("About", "Gestor de Videos\nVersion: unknown")
 
 
 def main():
