@@ -277,6 +277,9 @@ class VideoManagerApp:
 
         self.current_video = None
         self.current_thumbnail = None
+        # Flag para indicar que el usuario está arrastrando la barra de progreso
+        self.seeking = False
+        self._was_playing = False
 
         # Construir UI
         self.build_ui()
@@ -506,6 +509,10 @@ class VideoManagerApp:
         self.play_btn = ttk.Button(controls_frame, text="▶ Play", command=self.play_pause)
         self.play_btn.pack(side='left', padx=2)
 
+        # Seek buttons: retroceder/avanzar 10 segundos
+        ttk.Button(controls_frame, text="⏪ -10s", command=lambda: self.seek_relative(-10)).pack(side='left', padx=2)
+        ttk.Button(controls_frame, text="⏩ +10s", command=lambda: self.seek_relative(10)).pack(side='left', padx=2)
+
         ttk.Button(controls_frame, text="⏹ Stop", command=self.stop_video).pack(side='left', padx=2)
 
         # Etiqueta de tiempo actual
@@ -517,6 +524,11 @@ class VideoManagerApp:
         self.progress_scale = ttk.Scale(controls_frame, from_=0, to=100,
                                        variable=self.progress_var, orient='horizontal')
         self.progress_scale.pack(side='left', fill='x', expand=True, padx=5)
+        # Bind press/move/release to support dragging the slider to seek
+        self.progress_scale.bind('<ButtonPress-1>', self.on_progress_press)
+        self.progress_scale.bind('<B1-Motion>', self.on_progress_move)
+        self.progress_scale.bind('<ButtonRelease-1>', self.on_progress_release)
+        # Also support simple clicks on the scale
         self.progress_scale.bind('<Button-1>', self.on_progress_click)
 
         # Etiqueta de duración total
@@ -530,6 +542,15 @@ class VideoManagerApp:
                                 variable=self.volume_var, orient='horizontal',
                                 command=self.set_volume, length=100)
         volume_scale.pack(side='left', padx=2)
+
+        # Keyboard shortcuts para seek: flecha izquierda/derecha
+        try:
+            # Bindings accept an event argument; use lambdas to call seek_relative
+            self.root.bind('<Left>', lambda e: self.seek_relative(-10))
+            self.root.bind('<Right>', lambda e: self.seek_relative(10))
+        except Exception:
+            # Si falla el binding por alguna razón, no bloquear la UI
+            pass
 
         # Panel de detalles
         details_frame = ttk.LabelFrame(player_frame, text="Detalles del Video")
@@ -800,6 +821,40 @@ class VideoManagerApp:
             self.time_label.config(text="00:00")
             # La duración se mantiene visible
 
+    def seek_relative(self, seconds):
+        """Seek relativo (segundos) desde la posición actual. Positive -> avanzar, negative -> retroceder."""
+        if not VLC_AVAILABLE or not self.player:
+            return
+        try:
+            total_ms = self.player.get_length()
+            if total_ms <= 0:
+                return
+
+            current_ms = self.player.get_time()
+            if current_ms < 0:
+                current_ms = 0
+
+            new_ms = int(current_ms + (seconds * 1000))
+            new_ms = max(0, min(new_ms, int(total_ms)))
+
+            # Marcar seeking para evitar race con update_progress
+            self.seeking = True
+            # Realizar seek
+            try:
+                self.player.set_time(new_ms)
+            except Exception:
+                # Fallback a set_position si set_time no está disponible
+                try:
+                    pos = float(new_ms) / float(total_ms)
+                    self.player.set_position(pos)
+                except Exception:
+                    pass
+
+            # Actualizar UI inmediatamente
+            self.update_progress_once()
+        finally:
+            self.seeking = False
+
     def set_volume(self, value):
         """Establece el volumen"""
         if VLC_AVAILABLE and self.player:
@@ -817,6 +872,64 @@ class VideoManagerApp:
             self.player.set_position(position)
             # Forzar actualización inmediata
             self.root.after(100, self.update_progress)
+
+    def on_progress_press(self, _event):
+        """Usuario inició la interacción con la barra (presionó)."""
+        if not VLC_AVAILABLE or not self.player:
+            return
+        # Marcar que estamos en modo 'seeking'
+        self.seeking = True
+        try:
+            self._was_playing = bool(self.player.is_playing())
+        except Exception:
+            self._was_playing = False
+        # Pausar actualización automática mientras el usuario arrastra
+
+    def on_progress_move(self, _event):
+        """Actualizar posición visual mientras el usuario arrastra."""
+        if not VLC_AVAILABLE or not self.player:
+            return
+        # Solo actualizar la etiqueta de tiempo mientras arrastra
+        try:
+            length = self.player.get_length()
+            if length > 0:
+                position = self.progress_var.get() / 100.0
+                ms = int(position * length)
+                self.time_label.config(text=self.format_time_ms(ms))
+        except Exception:
+            pass
+
+    def on_progress_release(self, _event):
+        """El usuario soltó el slider; hacer seek y reanudar si era necesario."""
+        if not VLC_AVAILABLE or not self.player:
+            self.seeking = False
+            return
+
+        try:
+            length = self.player.get_length()
+            if length > 0:
+                position = self.progress_var.get() / 100.0
+                # Realizar el seek en VLC
+                self.player.set_position(position)
+                # Si estaba reproduciendo antes del seek, reanudar
+                if self._was_playing:
+                    # small delay to let VLC process the set_position
+                    self.root.after(100, command=self.player.play)
+                    self.play_btn.config(text="⏸ Pause")
+                else:
+                    # Force update once to reflect the newly selected position
+                    self.update_progress_once()
+        except Exception:
+            pass
+        finally:
+            # salir del modo seeking y reanudar las actualizaciones automáticas
+            self.seeking = False
+            # Reanudar la actualización periódica si está reproduciendo
+            try:
+                if self.player.get_state() == vlc.State.Playing:  # type: ignore
+                    self.root.after(500, self.update_progress)
+            except Exception:
+                pass
 
     def update_progress(self):
         """Actualiza la barra de progreso y los tiempos"""
