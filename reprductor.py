@@ -191,7 +191,8 @@ class VideoDatabase:
 
         # Lista blanca de columnas permitidas para actualizar
         allowed_columns = {
-            'filepath', 'filename', 'category', 'tags', 'rating', 'duration', 'notes', 'thumbnail_path'}
+            'filepath', 'filename', 'category', 'tags', 'rating', 'duration', 'notes',
+            'thumbnail_path'}
 
         # Filtrar solo claves válidas
         safe_kwargs = {k: v for k, v in kwargs.items() if k in allowed_columns}
@@ -290,6 +291,8 @@ class VideoManagerApp:
         # Flag para indicar que el usuario está arrastrando la barra de progreso
         self.seeking = False
         self._was_playing = False
+        # FPS del video actual (usado para avanzar/retroceder frame a frame)
+        self.current_fps = None
 
         # Construir UI
         self.build_ui()
@@ -351,6 +354,8 @@ class VideoManagerApp:
             menubar = tk.Menu(self.root)
             help_menu = tk.Menu(menubar, tearoff=0)
             help_menu.add_command(label=f"About (v{get_version()})", command=self.show_about)
+            help_menu.add_separator()
+            help_menu.add_command(label="Atajos de teclado...", command=self.show_shortcuts)
             menubar.add_cascade(label="Help", menu=help_menu)
             self.root.config(menu=menubar)
         except Exception:
@@ -599,6 +604,11 @@ class VideoManagerApp:
             self.root.bind('<Control-space>', lambda e: self.play_pause())
             self.root.bind('<Control-l>', lambda e: self.seek_relative(10))
             self.root.bind('<Control-L>', lambda e: self.seek_relative(10))
+            # Frame-step when paused: Ctrl+M -> next frame, Ctrl+N -> previous frame
+            self.root.bind('<Control-m>', lambda e: self.step_frame_forward())
+            self.root.bind('<Control-M>', lambda e: self.step_frame_forward())
+            self.root.bind('<Control-n>', lambda e: self.step_frame_back())
+            self.root.bind('<Control-N>', lambda e: self.step_frame_back())
         except Exception:
             # If binding fails, don't block the UI
             pass
@@ -611,6 +621,10 @@ class VideoManagerApp:
         ttk.Label(details_frame, text="Nombre:").grid(row=0, column=0, sticky='w', padx=5, pady=2)
         self.name_label = ttk.Label(details_frame, text="-")
         self.name_label.grid(row=0, column=1, sticky='w', padx=5, pady=2)
+        # FPS display
+        ttk.Label(details_frame, text="FPS:").grid(row=0, column=2, sticky='w', padx=5, pady=2)
+        self.fps_label = ttk.Label(details_frame, text='-')
+        self.fps_label.grid(row=0, column=3, sticky='w', padx=5, pady=2)
 
         ttk.Label(details_frame, text="Categoría:").grid(row=1, column=0, sticky='w',
                                                          padx=5, pady=2)
@@ -782,6 +796,32 @@ class VideoManagerApp:
 
         # Limpiar vista previa anterior
         self.clear_timeline_preview()
+        # Intentar leer FPS del archivo para soportar avance/retroceso cuadro a cuadro
+        try:
+            filepath = self.current_video[1]
+            cap = cv2.VideoCapture(filepath)  # type: ignore
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)  # type: ignore
+                if fps and math.isfinite(fps) and fps > 0:
+                    self.current_fps = float(fps)
+                else:
+                    self.current_fps = None
+            else:
+                self.current_fps = None
+            try:
+                cap.release()
+            except Exception:
+                pass
+        except Exception:
+            self.current_fps = None
+        # Actualizar etiqueta de FPS en la UI
+        try:
+            if self.current_fps and self.current_fps > 0:
+                self.fps_label.config(text=f"{self.current_fps:.2f}")
+            else:
+                self.fps_label.config(text='-')
+        except Exception:
+            pass
 
     def on_video_double_click(self, _event):
         """Maneja el doble clic en un video"""
@@ -905,6 +945,79 @@ class VideoManagerApp:
             self.update_progress_once()
         finally:
             self.seeking = False
+
+    def step_frame_forward(self):
+        """Avanza un fotograma cuando el reproductor está en pausa."""
+        if not VLC_AVAILABLE or not self.player:
+            return
+        try:
+            # Solo funcionar cuando está pausado
+            if self.player.is_playing():
+                return
+
+            # Try using FPS if available, otherwise fallback to smallest time delta we can use
+            delta_ms = None
+            if self.current_fps and self.current_fps > 0:
+                try:
+                    delta_ms = int(1000.0 / float(self.current_fps))
+                except Exception:
+                    delta_ms = None
+
+            if not delta_ms or delta_ms <= 0:
+                # fallback attempts (ms)
+                for candidate in (1, 5, 10, 20, 50, 100):
+                    # Choose first candidate that is smaller than 1 second and reasonable
+                    delta_ms = candidate
+                    break
+            current_ms = max(0, self.player.get_time())
+            total_ms = self.player.get_length()
+            new_ms = int(min(current_ms + delta_ms, total_ms))
+            try:
+                self.player.set_time(new_ms)
+            except Exception:
+                try:
+                    pos = float(new_ms) / float(total_ms)
+                    self.player.set_position(pos)
+                except Exception:
+                    pass
+            # Actualizar UI sin cambiar estado de reproducción
+            self.update_progress_once()
+        except Exception:
+            pass
+
+    def step_frame_back(self):
+        """Retrocede un fotograma cuando el reproductor está en pausa."""
+        if not VLC_AVAILABLE or not self.player:
+            return
+        try:
+            if self.player.is_playing():
+                return
+
+            delta_ms = None
+            if self.current_fps and self.current_fps > 0:
+                try:
+                    delta_ms = int(1000.0 / float(self.current_fps))
+                except Exception:
+                    delta_ms = None
+
+            if not delta_ms or delta_ms <= 0:
+                for candidate in (1, 5, 10, 20, 50, 100):
+                    delta_ms = candidate
+                    break
+            current_ms = max(0, self.player.get_time())
+            new_ms = int(max(0, current_ms - delta_ms))
+            try:
+                self.player.set_time(new_ms)
+            except Exception:
+                try:
+                    total_ms = self.player.get_length()
+                    pos = float(new_ms) / float(total_ms)
+                    self.player.set_position(pos)
+                except Exception:
+                    pass
+            self.update_progress_once()
+        except Exception:
+            pass
 
     def set_volume(self, value):
         """Establece el volumen"""
@@ -1814,7 +1927,8 @@ class VideoManagerApp:
                 except Exception:
                     time_str = "00:00"
 
-                time_label = tk.Label(thumb_frame, text=time_str, bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
+                time_label = tk.Label(thumb_frame, text=time_str, bg='#34495e', fg='white',
+                                      font=('Arial', 9, 'bold'))
                 time_label.pack()
 
             # Update stored frame positions
@@ -1841,9 +1955,28 @@ class VideoManagerApp:
         try:
             version = get_version()
             messagebox.showinfo("About",
-                                f"Gestor de Videos\nVersion: {version}\n\nDesarrollado con Python/Tkinter")
+                                f"Gestor de Videos\nVersion: {version}\n\n"
+                                "Desarrollado con Python/Tkinter")
         except Exception:
             messagebox.showinfo("About", "Gestor de Videos\nVersion: unknown")
+
+    def show_shortcuts(self):
+        """Muestra un diálogo con los atajos de teclado del reproductor."""
+        try:
+            shortcuts = (
+                "Atajos del reproductor:\n\n"
+                "Ctrl+J -> Retroceder 10 segundos\n"
+                "Ctrl+L -> Avanzar 10 segundos\n"
+                "Ctrl+K -> Play/Pause\n"
+                "Ctrl+Space -> Play/Pause (alternativo)\n"
+                "Ctrl+M -> Avanzar 1 fotograma (cuando está en pausa)\n"
+                "Ctrl+N -> Retroceder 1 fotograma (cuando está en pausa)\n"
+            )
+            messagebox.askokcancel("Atajos de teclado", shortcuts)
+        except Exception:
+            # En caso de error, mostrar algo genérico
+            messagebox.askokcancel("Atajos de teclado",
+                                "Ver documentación para los atajos de teclado.")
 
 
 def main():
