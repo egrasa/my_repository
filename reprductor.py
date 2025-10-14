@@ -5,25 +5,15 @@ from tkinter import ttk, filedialog, messagebox
 import os
 import sqlite3
 from pathlib import Path
-try:
-    # When package-installed or used as a module
-    from .version import get_version
-except Exception:
-    # Fallback when running as a script (tests running from tests/)
-    try:
-        from version import get_version
-    except Exception:
-        def get_version():
-            return '0.0.0'
 from datetime import datetime
 import math
 from PIL import Image, ImageTk
+from version import get_version
 import cv2
 import vlc
 
 
 VLC_AVAILABLE = True
-
 
 class ProgressDialog:
     """Ventana de diálogo con barra de progreso"""
@@ -203,11 +193,13 @@ class VideoDatabase:
 
 
         cursor.execute(f'UPDATE videos SET {set_clause} WHERE id = ?', values)
-        if cursor.rowcount > 0:
+        # Always commit the change; rowcount may be 0 if value is unchanged
+        try:
             self.conn.commit()
-        else:
-            # No se encontró el video; registrar advertencia pero no fallar
-            print(f"Warning: No video found with id {video_id} to update.")
+        except sqlite3.Error as e:
+            # Log database-specific errors for debugging without crashing the UI
+            print(f"Database commit error in update_video: {e}")
+
 
     def delete_video(self, video_id):
         """Elimina un video de la base de datos"""
@@ -269,6 +261,13 @@ class VideoManagerApp:
         self.tags_entry = None
         self.rating_var = None
         self.notes_text = None
+        self._treeview_heading_labels = {}
+        self._treeview_sort_state = {}
+        self.add_four_btn = None
+        self.set_default_thumb_btn = None
+        self.selected_timeline_thumb = None
+        self.selected_timeline_thumbnail = None
+        self.fps_label = None
 
 
         # Directorio para miniaturas
@@ -313,7 +312,9 @@ class VideoManagerApp:
                     duration = frame_count / fps
                     return int(duration)
             return 0
-        except (cv2.error, OSError, ValueError, AttributeError):
+        except Exception:
+            # Capturar cualquier excepción derivada de Exception (incluye OSError,
+            # ValueError, AttributeError, etc.)
             return 0
 
     @staticmethod
@@ -358,7 +359,8 @@ class VideoManagerApp:
             help_menu.add_command(label="Atajos de teclado...", command=self.show_shortcuts)
             menubar.add_cascade(label="Help", menu=help_menu)
             self.root.config(menu=menubar)
-        except Exception:
+        except tk.TclError:
+            # Only ignore Tkinter/Tcl related errors when configuring the menu
             pass
         # Panel principal dividido
         self.paned = ttk.PanedWindow(self.root, orient='horizontal')
@@ -486,6 +488,14 @@ class VideoManagerApp:
                                        state='disabled')
         self.add_four_btn.pack(side='top', pady=2)
 
+        # Botón para usar la miniatura seleccionada como la miniatura principal
+        # Re-purpose: button will now seek the player to the selected thumbnail time
+        self.set_default_thumb_btn = ttk.Button(preview_frame,
+                                                text="Ir al tiempo de la miniatura seleccionada",
+                                                command=self.seek_to_selected_thumbnail,
+                                                state='disabled')
+        self.set_default_thumb_btn.pack(side='top', pady=2)
+
         # Canvas con scrollbar para miniaturas múltiples
         canvas_frame = ttk.Frame(preview_frame)
         canvas_frame.pack(side='top', fill='both', expand=True, padx=5, pady=5)
@@ -531,7 +541,10 @@ class VideoManagerApp:
         self.preview_inner_frame.grid_columnconfigure(0, weight=1)
 
         # Lista para guardar referencias a las imágenes
+        # (se inicializa de nuevo en clear_timeline_preview)
         self.timeline_images = []
+        # Estado de selección en el timeline (se inicializa cuando se crea la vista)
+        self.selected_timeline_thumb = None  # dict: {'frame_pos', 'photoimage', 'widget'}
 
     def build_player_panel(self):
         """Construye el panel del reproductor"""
@@ -796,6 +809,19 @@ class VideoManagerApp:
 
         # Limpiar vista previa anterior
         self.clear_timeline_preview()
+
+        # Intentar cargar la miniatura almacenada en la base de datos (thumbnail_path)
+        try:
+            print(f"DEBUG: load_video_details video_id={_video_id}"
+                  f" thumbnail_path={_thumbnail_path}")
+            if _thumbnail_path:
+                # Si existe la ruta, cargarla y usarla como preview por defecto
+                self.load_thumbnail(_video_id, _thumbnail_path, self.current_video[1])
+                # load_thumbnail actualiza la vista previa (no devuelve valor)
+                # No hacemos nada más aquí;
+                # el timeline puede añadir miniaturas debajo cuando se genere
+        except Exception:
+            pass
         # Intentar leer FPS del archivo para soportar avance/retroceso cuadro a cuadro
         try:
             filepath = self.current_video[1]
@@ -1353,15 +1379,27 @@ class VideoManagerApp:
                     img.save(thumbnail_path, "JPEG", quality=85)
 
                 # Actualizar base de datos
-                self.db.update_video(video_id, thumbnail_path=str(thumbnail_path))
+                abs_thumbnail_path = str(thumbnail_path.resolve())
+                self.db.update_video(video_id, thumbnail_path=abs_thumbnail_path)
+                try:
+                    print(f"DEBUG: generate_thumbnail saved for"
+                          f" video {video_id} -> {abs_thumbnail_path}")
+                except Exception:
+                    print(f"DEBUG: generate_thumbnail saved for"
+                          f" video {video_id} -> {abs_thumbnail_path}")
 
-                return str(thumbnail_path)
+                return abs_thumbnail_path
             else:
                 # Silencioso: el video puede estar corrupto
                 return None
 
-        except (cv2.error, OSError, ValueError) as e:
-            # Manejo robusto de errores específicos (OpenCV, archivos, valores)
+        except (OSError, ValueError) as e:
+            # Manejo robusto de errores específicos (archivos, valores)
+            print(f"Error generando miniatura: {e}")
+            return None
+        except Exception as e:
+            # Captura cualquier otra excepción (incluyendo errores de OpenCV)
+            # Usamos Exception aquí para asegurar que solo se capturen excepciones que hereden de Exception
             print(f"Error generando miniatura: {e}")
             return None
 
@@ -1641,7 +1679,8 @@ class VideoManagerApp:
                     time_seconds = frame_pos / fps
                     time_str = self.format_duration(int(time_seconds))
 
-                    thumbnails.append((img_resized, time_str))
+                    # Guardar frame_pos junto con la imagen y el tiempo para enlazar clicks correctamente
+                    thumbnails.append((int(frame_pos), img_resized, time_str))
 
                     # Save the frame positions for potential 'add more' operations
                     try:
@@ -1664,7 +1703,7 @@ class VideoManagerApp:
                 return
 
             # Crear grid de miniaturas (hasta ncols por fila)
-            for idx, (img, time_str) in enumerate(thumbnails):
+            for idx, (fp, img, time_str) in enumerate(thumbnails):
                 row = idx // ncols
                 col = idx % ncols
 
@@ -1680,6 +1719,13 @@ class VideoManagerApp:
                 # Label con la imagen
                 img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
                 img_label.pack(padx=2, pady=2)
+                # Bind click to select this thumbnail (capture frame_pos)
+                try:
+                    img_label.bind('<Button-1>', lambda e, fp=frame_pos, ph=photo, w=thumb_frame: self.on_timeline_thumb_click(fp, ph, w))
+                except Exception:
+                    pass
+                # Bind click to select this thumbnail (capture fp for this iteration)
+                img_label.bind('<Button-1>', lambda e, fp=fp, ph=photo, w=thumb_frame: self.on_timeline_thumb_click(fp, ph, w))
 
                 # Label con el tiempo
                 time_label = tk.Label(thumb_frame, text=time_str,
@@ -1725,6 +1771,88 @@ class VideoManagerApp:
             # Catch only expected exceptions raised during event handling / canvas operations
             print(f"Error handling mouse wheel event: {e}")
 
+    def on_timeline_thumb_click(self, frame_pos, photoimage, thumb_frame):
+        """Marca una miniatura del timeline como seleccionada para usarla como miniatura principal."""
+        try:
+            # Limpiar selección anterior visual
+            if self.selected_timeline_thumb and 'widget' in self.selected_timeline_thumb:
+                try:
+                    prev = self.selected_timeline_thumb['widget']
+                    prev.config(relief='raised', bg='#34495e')
+                except Exception:
+                    pass
+
+            # Marcar la nueva selección
+            try:
+                thumb_frame.config(relief='sunken', bg='#2c3e50')
+            except Exception:
+                pass
+
+            self.selected_timeline_thumb = {
+                'frame_pos': int(frame_pos),
+                'photoimage': photoimage,
+                'widget': thumb_frame
+            }
+            # Habilitar el botón para establecer como miniatura principal
+            try:
+                self.set_default_thumb_btn.config(state='normal')
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def set_selected_thumbnail_as_default(self):
+        """Seek the player to the time represented by the selected timeline thumbnail."""
+        if not self.current_video:
+            return
+
+        if not self.selected_timeline_thumb:
+            messagebox.showinfo("Info", "No hay miniatura seleccionada")
+            return
+
+        frame_pos = int(self.selected_timeline_thumb.get('frame_pos', 0))
+        filepath = self.current_video[1]
+
+        # Try to compute time from frame_pos using fps if available, else best-effort via frame index
+        try:
+            cap = cv2.VideoCapture(filepath)  # type: ignore
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps and fps > 0:
+                time_ms = int((frame_pos / float(fps)) * 1000)
+            else:
+                # If fps unknown, estimate using total frames and length
+                total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                total_ms = cap.get(cv2.CAP_PROP_POS_MSEC) or cap.get(cv2.CAP_PROP_POS_MSEC)
+                # Fallback: treat frame_pos as milliseconds if nothing else
+                time_ms = int(frame_pos)
+            try:
+                cap.release()
+            except Exception:
+                pass
+        except Exception:
+            time_ms = None
+
+        if time_ms is None:
+            messagebox.showerror("Error", "No se pudo calcular el tiempo de la miniatura seleccionada")
+            return
+
+        # Seek the VLC player if available
+        try:
+            if VLC_AVAILABLE and self.player:
+                # set_time expects milliseconds
+                try:
+                    self.player.set_time(int(time_ms))
+                except Exception:
+                    # fallback to set_position if length known
+                    total_ms = self.player.get_length()
+                    if total_ms and total_ms > 0:
+                        pos = float(time_ms) / float(total_ms)
+                        self.player.set_position(pos)
+                # Update UI immediately
+                self.update_progress_once()
+        except Exception:
+            pass
+
 
     def on_closing(self):
         """Maneja el cierre de la aplicación"""
@@ -1732,6 +1860,13 @@ class VideoManagerApp:
             self.player.stop()
         self.db.close()
         self.root.destroy()
+
+    def seek_to_selected_thumbnail(self):
+        """Button callback: seek to time of selected timeline thumbnail."""
+        try:
+            return self.set_selected_thumbnail_as_default()
+        except Exception:
+            return None
 
     def add_four_more_thumbnails_if_long(self):
         """Añade 4 miniaturas adicionales si la duración del video es > 15 minutos.
