@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import math
 from PIL import Image, ImageTk
+import threading
 from version import get_version
 import cv2
 import vlc
@@ -775,6 +776,10 @@ class VideoManagerApp:
         selection = self.video_tree.selection()
         if not selection:
             self.generate_timeline_btn.config(state='disabled')
+            try:
+                self.add_four_btn.config(state='disabled')
+            except Exception:
+                pass
             return
 
         video_id = int(selection[0])
@@ -786,6 +791,33 @@ class VideoManagerApp:
                 self.load_video_details(video)
                 # Habilitar botón de timeline
                 self.generate_timeline_btn.config(state='normal')
+                # Enable add_four_btn only for sufficiently long videos (>15 minutes)
+                try:
+                    duration = 0
+                    # duration is typically at index 6 (as used elsewhere)
+                    if len(video) > 6 and video[6] is not None:
+                        try:
+                            duration = float(video[6])
+                        except Exception:
+                            try:
+                                duration = int(video[6])
+                            except Exception:
+                                duration = 0
+                    # If DB has no duration, try to compute from file
+                    if (not duration or duration <= 0) and self.current_video and len(self.current_video) > 1:
+                        try:
+                            duration = float(self.get_video_duration(self.current_video[1]) or 0)
+                        except Exception:
+                            duration = duration or 0
+                    if duration > (15 * 60):
+                        self.add_four_btn.config(state='normal')
+                    else:
+                        self.add_four_btn.config(state='disabled')
+                except Exception:
+                    try:
+                        self.add_four_btn.config(state='disabled')
+                    except Exception:
+                        pass
                 break
 
     def load_video_details(self, video):
@@ -812,8 +844,6 @@ class VideoManagerApp:
 
         # Intentar cargar la miniatura almacenada en la base de datos (thumbnail_path)
         try:
-            print(f"DEBUG: load_video_details video_id={_video_id}"
-                  f" thumbnail_path={_thumbnail_path}")
             if _thumbnail_path:
                 # Si existe la ruta, cargarla y usarla como preview por defecto
                 self.load_thumbnail(_video_id, _thumbnail_path, self.current_video[1])
@@ -1381,12 +1411,7 @@ class VideoManagerApp:
                 # Actualizar base de datos
                 abs_thumbnail_path = str(thumbnail_path.resolve())
                 self.db.update_video(video_id, thumbnail_path=abs_thumbnail_path)
-                try:
-                    print(f"DEBUG: generate_thumbnail saved for"
-                          f" video {video_id} -> {abs_thumbnail_path}")
-                except Exception:
-                    print(f"DEBUG: generate_thumbnail saved for"
-                          f" video {video_id} -> {abs_thumbnail_path}")
+                # Debugging removed: generation saved to DB as absolute path
 
                 return abs_thumbnail_path
             else:
@@ -1634,119 +1659,101 @@ class VideoManagerApp:
                 messagebox.showwarning("Advertencia", "Número de miniaturas calculado es 0")
                 return
             frame_interval = max(1, total_frames // (num_thumbnails + 1))
-
-            thumbnails = []
-            for i in range(1, num_thumbnails + 1):
-                frame_pos = i * frame_interval
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)  # type: ignore
-                ret, frame = cap.read()
-
-                if ret and frame is not None:
-                    try:
-                        # Convertir a RGB
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
-                        # Crear imagen PIL
-                        img = Image.fromarray(frame_rgb)
-                    except (cv2.error, ValueError, TypeError) as e:
-                        # Omitir frame problemático (errores de OpenCV o creación de imagen)
-                        print(f"Warning: fallo procesando frame {frame_pos}: {e}")
-                        continue
-
-                    # Crear imagen con relación 3:2 (centrado) y redimensionar a 150x100
-                    try:
-                        target_aspect = 3.0 / 2.0
-                        width, height = img.size
-                        current_aspect = width / height if height else 1
-
-                        if current_aspect > target_aspect:
-                            # demasiado ancha -> recortar ancho
-                            new_width = int(target_aspect * height)
-                            left = (width - new_width) // 2
-                            img_cropped = img.crop((left, 0, left + new_width, height))
-                        else:
-                            # demasiado alta -> recortar alto
-                            new_height = int(width / target_aspect)
-                            top = (height - new_height) // 2
-                            img_cropped = img.crop((0, top, width, top + new_height))
-
-                        img_resized = img_cropped.resize((150, 100), Image.Resampling.LANCZOS)
-                    except (ValueError, OSError, AttributeError) as e:
-                        # Fallback a un resize directo si el crop/resize falla por errores esperados
-                        print(f"Warning: fallback while creating timeline thumb: {e}")
-                        img_resized = img.resize((150, 100), Image.Resampling.LANCZOS)
-
-                    # Calcular tiempo de esta miniatura
-                    time_seconds = frame_pos / fps
-                    time_str = self.format_duration(int(time_seconds))
-
-                    # Guardar frame_pos junto con la imagen y el tiempo para enlazar clicks correctamente
-                    thumbnails.append((int(frame_pos), img_resized, time_str))
-
-                    # Save the frame positions for potential 'add more' operations
-                    try:
-                        self.last_timeline_frame_positions = [i * frame_interval for i in range(1, num_thumbnails + 1)]
-                    except Exception:
-                        self.last_timeline_frame_positions = []
-
+            # Prepare frame positions list and release capture; worker will re-open as needed
+            frame_positions = [i * frame_interval for i in range(1, num_thumbnails + 1)]
+            try:
+                self.last_timeline_frame_positions = list(frame_positions)
+            except Exception:
+                self.last_timeline_frame_positions = []
             cap.release()
 
-            # Limpiar contenedor de progreso antes de insertar miniaturas
-            try:
-                progress_container.destroy()
-            except (tk.TclError, AttributeError):
-                # Si el widget ya fue destruido o no tiene el método, ignorar
-                pass
+            # Start background worker to generate thumbnails (do not block UI)
+            thumbnails = []
+            # show progress container while worker runs
+            self._timeline_worker_progress = 0
+            self._timeline_worker_total = len(frame_positions)
 
-            if not thumbnails:
-                messagebox.showwarning("Advertencia", "No se pudieron generar miniaturas")
-                self.clear_timeline_preview()
-                return
-
-            # Crear grid de miniaturas (hasta ncols por fila)
-            for idx, (fp, img, time_str) in enumerate(thumbnails):
-                row = idx // ncols
-                col = idx % ncols
-
-                # Frame para cada miniatura
-                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e',
-                                      relief='raised', borderwidth=2)
-                thumb_frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
-
-                # Convertir a PhotoImage
-                photo = ImageTk.PhotoImage(img)
-                self.timeline_images.append(photo)  # Guardar referencia
-
-                # Label con la imagen
-                img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
-                img_label.pack(padx=2, pady=2)
-                # Bind click to select this thumbnail (capture frame_pos)
+            def worker():
+                results = []
                 try:
-                    img_label.bind('<Button-1>', lambda e, fp=frame_pos, ph=photo, w=thumb_frame: self.on_timeline_thumb_click(fp, ph, w))
+                    cap2 = cv2.VideoCapture(filepath)  # type: ignore
+                    for idx, frame_pos in enumerate(frame_positions, 1):
+                        try:
+                            cap2.set(cv2.CAP_PROP_POS_FRAMES, int(frame_pos))  # type: ignore
+                            ret, frame = cap2.read()
+                            if not (ret and frame is not None):
+                                continue
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # type: ignore
+                            img = Image.fromarray(frame_rgb)
+                            # crop/resize
+                            target_aspect = 3.0 / 2.0
+                            width, height = img.size
+                            current_aspect = width / height if height else 1
+                            if current_aspect > target_aspect:
+                                new_width = int(target_aspect * height)
+                                left = (width - new_width) // 2
+                                img_cropped = img.crop((left, 0, left + new_width, height))
+                            else:
+                                new_height = int(width / target_aspect)
+                                top = (height - new_height) // 2
+                                img_cropped = img.crop((0, top, width, top + new_height))
+                            img_resized = img_cropped.resize((150, 100), Image.Resampling.LANCZOS)
+                            # save cached
+                            try:
+                                thumb_name = f"thumb_{_video_id}_{int(frame_pos)}.jpg"
+                                thumb_path = self.thumbnail_dir / thumb_name
+                                if not thumb_path.exists():
+                                    img_resized.save(thumb_path, 'JPEG', quality=85)
+                                results.append((int(frame_pos), str(thumb_path), self.format_duration(int(frame_pos / fps))))
+                            except Exception:
+                                results.append((int(frame_pos), None, self.format_duration(int(frame_pos / fps))))
+                        except Exception:
+                            pass
+                        # update progress counter
+                        self._timeline_worker_progress = idx
+                    try:
+                        cap2.release()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-                # Bind click to select this thumbnail (capture fp for this iteration)
-                img_label.bind('<Button-1>', lambda e, fp=fp, ph=photo, w=thumb_frame: self.on_timeline_thumb_click(fp, ph, w))
+                # Deliver results back on main thread
+                try:
+                    self.root.after(0, lambda: self._on_timeline_generation_complete(results, fps))
+                except Exception:
+                    pass
 
-                # Label con el tiempo
-                time_label = tk.Label(thumb_frame, text=time_str,
-                                     bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
-                time_label.pack()
+            # start worker thread
+            t = threading.Thread(target=worker, daemon=True)
+            t.start()
 
-            # Enable the add-four button if the video is long enough
-            try:
-                if duration_seconds > 15 * 60:
-                    self.add_four_btn.config(state='normal')
-                else:
-                    self.add_four_btn.config(state='disabled')
-            except Exception:
-                pass
+            # Create a simple polling label to show progress until worker finishes
+            def poll_progress():
+                try:
+                    # update label
+                    progress_label.config(text=f"Generando miniaturas... ({self._timeline_worker_progress}/{self._timeline_worker_total})")
+                    if hasattr(self, '_on_timeline_generation_complete_called') and self._on_timeline_generation_complete_called:
+                        try:
+                            progress_container.destroy()
+                        except Exception:
+                            pass
+                        return
+                except Exception:
+                    pass
+                # reschedule
+                self.root.after(200, poll_progress)
 
-            # Configurar grid para centrar: dar peso a cada columna
-            for c in range(ncols):
-                self.preview_inner_frame.grid_columnconfigure(c, weight=1)
+            # start polling
+            poll_progress()
 
-            messagebox.askokcancel("Éxito",
-                                   f"Se generaron {len(thumbnails)} miniaturas del timeline")
+            # We started the background worker and polling; return now to avoid
+            # executing the original synchronous rendering code below.
+            return
+
+            # Synchronous rendering removed: thumbnail generation runs in the background thread
+            # and results are handled in _on_timeline_generation_complete, which will destroy
+            # the progress container stored in self._timeline_progress_container.
+            return
 
         except (OSError, ValueError, tk.TclError) as e:
             messagebox.showerror("Error", f"Error generando timeline: {e}")
@@ -1770,6 +1777,148 @@ class VideoManagerApp:
         except (AttributeError, tk.TclError, ValueError) as e:
             # Catch only expected exceptions raised during event handling / canvas operations
             print(f"Error handling mouse wheel event: {e}")
+
+    def _on_timeline_generation_complete(self, results, fps):
+        """Called on main thread when background worker finishes. Results is list of (frame_pos, thumb_path, time_str)."""
+        try:
+            # mark completion
+            self._on_timeline_generation_complete_called = True
+            # Build pages
+            page_size = getattr(self, 'timeline_page_size', 24)
+            pages = [results[i:i + page_size] for i in range(0, len(results), page_size)]
+            self.timeline_pages = pages
+            self.timeline_current_page = 0
+            if self.timeline_pages:
+                # render first page
+                try:
+                    self._render_timeline_page(0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _render_timeline_page(self, page_index):
+        """Render a page of timeline thumbnails previously stored in self.timeline_pages.
+
+        Page items are tuples: (frame_pos, thumb_path, time_str)
+        This method keeps PhotoImage references in self.timeline_images so Tk doesn't GC them.
+        """
+        try:
+            pages = getattr(self, 'timeline_pages', []) or []
+            if not pages:
+                return
+            if page_index < 0:
+                page_index = 0
+            if page_index >= len(pages):
+                page_index = len(pages) - 1
+
+            # Clear preview area
+            for widget in self.preview_inner_frame.winfo_children():
+                widget.destroy()
+
+            self.timeline_images = []
+
+            ncols = 4
+
+            # Navigation bar
+            nav_frame = tk.Frame(self.preview_inner_frame, bg='#2c3e50')
+            nav_frame.grid(row=0, column=0, columnspan=ncols, sticky='ew', pady=6)
+            try:
+                prev_btn = ttk.Button(nav_frame, text='◀', command=lambda: self._render_timeline_page(max(0, page_index - 1)))
+                next_btn = ttk.Button(nav_frame, text='▶', command=lambda: self._render_timeline_page(min(len(pages) - 1, page_index + 1)))
+                page_lbl = tk.Label(nav_frame, text=f"Página {page_index + 1}/{len(pages)}", bg='#2c3e50', fg='white')
+                prev_btn.pack(side='left')
+                page_lbl.pack(side='left', expand=True)
+                next_btn.pack(side='right')
+            except Exception:
+                pass
+
+            page = pages[page_index]
+
+            # Render thumbnails starting at row 1 (row 0 used by nav)
+            for idx, item in enumerate(page):
+                try:
+                    frame_pos, thumb_path, time_str = item
+                except Exception:
+                    # Fallback if item shape is unexpected
+                    try:
+                        frame_pos = int(item[0])
+                    except Exception:
+                        frame_pos = 0
+                    thumb_path = None
+                    time_str = "00:00"
+
+                row = (idx // ncols) + 1
+                col = idx % ncols
+
+                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e', relief='raised', borderwidth=2)
+                thumb_frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
+
+                photo = None
+                if thumb_path:
+                    try:
+                        if os.path.exists(thumb_path):
+                            img = Image.open(thumb_path)
+                            img = img.resize((150, 100), Image.Resampling.LANCZOS)
+                            photo = ImageTk.PhotoImage(img)
+                    except Exception:
+                        photo = None
+
+                if not photo:
+                    # Create a plain placeholder image
+                    try:
+                        img = Image.new('RGB', (150, 100), color=(60, 70, 90))
+                        photo = ImageTk.PhotoImage(img)
+                    except Exception:
+                        photo = None
+
+                if photo:
+                    self.timeline_images.append(photo)
+                    img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
+                else:
+                    img_label = tk.Label(thumb_frame, text='N/D', bg='#34495e', fg='white')
+
+                img_label.pack(padx=2, pady=2)
+
+                # Time label
+                try:
+                    tlabel = tk.Label(thumb_frame, text=str(time_str), bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
+                    tlabel.pack()
+                except Exception:
+                    pass
+
+                # Bind click to select and enable seek
+                try:
+                    # Capture current references in default args
+                    img_label.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo, tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                    thumb_frame.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo, tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                except Exception:
+                    pass
+
+            # Update stored frame positions (flatten pages)
+            try:
+                all_positions = []
+                for p in pages:
+                    for it in p:
+                        try:
+                            all_positions.append(int(it[0]))
+                        except Exception:
+                            pass
+                self.last_timeline_frame_positions = all_positions
+            except Exception:
+                pass
+
+            # Configure grid column weights
+            try:
+                for c in range(ncols):
+                    self.preview_inner_frame.grid_columnconfigure(c, weight=1)
+            except Exception:
+                pass
+
+            # store current page
+            self.timeline_current_page = page_index
+        except Exception:
+            pass
 
     def on_timeline_thumb_click(self, frame_pos, photoimage, thumb_frame):
         """Marca una miniatura del timeline como seleccionada para usarla como miniatura principal."""
@@ -1801,7 +1950,7 @@ class VideoManagerApp:
         except Exception:
             pass
 
-    def set_selected_thumbnail_as_default(self):
+    def seek_to_selected_thumbnail(self):
         """Seek the player to the time represented by the selected timeline thumbnail."""
         if not self.current_video:
             return
@@ -1813,43 +1962,187 @@ class VideoManagerApp:
         frame_pos = int(self.selected_timeline_thumb.get('frame_pos', 0))
         filepath = self.current_video[1]
 
-        # Try to compute time from frame_pos using fps if available, else best-effort via frame index
+        # Try to compute time from frame_pos using fps if available,
+        # else best-effort via frame index
+        time_ms = None
         try:
             cap = cv2.VideoCapture(filepath)  # type: ignore
             fps = cap.get(cv2.CAP_PROP_FPS)
             if fps and fps > 0:
                 time_ms = int((frame_pos / float(fps)) * 1000)
             else:
-                # If fps unknown, estimate using total frames and length
-                total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-                total_ms = cap.get(cv2.CAP_PROP_POS_MSEC) or cap.get(cv2.CAP_PROP_POS_MSEC)
-                # Fallback: treat frame_pos as milliseconds if nothing else
-                time_ms = int(frame_pos)
+                # If fps unknown, try to estimate using total frames and video length
+                try:
+                    total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    if total_frames and total_frames > 0:
+                        # try to get duration from player length if available
+                        duration_seconds = None
+                        try:
+                            if VLC_AVAILABLE and self.player:
+                                total_ms = self.player.get_length()
+                                if total_ms and total_ms > 0:
+                                    duration_seconds = float(total_ms) / 1000.0
+                        except Exception:
+                            duration_seconds = None
+
+                        if duration_seconds and duration_seconds > 0:
+                            # estimate fps
+                            try:
+                                fps_est = float(total_frames) / float(duration_seconds)
+                                if fps_est > 0:
+                                    time_ms = int((frame_pos / fps_est) * 1000)
+                            except Exception:
+                                time_ms = None
+                except Exception:
+                    time_ms = None
+
+            # Fallback: treat frame_pos as milliseconds if nothing else
+            if time_ms is None:
+                try:
+                    time_ms = int(frame_pos)
+                except Exception:
+                    time_ms = 0
+
             try:
                 cap.release()
             except Exception:
                 pass
         except Exception:
-            time_ms = None
+            # If OpenCV fails, fallback to interpreting frame_pos as ms
+            try:
+                time_ms = int(frame_pos)
+            except Exception:
+                time_ms = 0
 
-        if time_ms is None:
-            messagebox.showerror("Error", "No se pudo calcular el tiempo de la miniatura seleccionada")
-            return
-
-        # Seek the VLC player if available
-        try:
-            if VLC_AVAILABLE and self.player:
-                # set_time expects milliseconds
+        # Perform the seek using VLC if available
+        def do_seek(target_ms):
+            try:
+                total_ms_local = 0
                 try:
-                    self.player.set_time(int(time_ms))
+                    total_ms_local = (self.player.get_length() or 0
+                                      ) if (VLC_AVAILABLE and self.player) else 0
                 except Exception:
-                    # fallback to set_position if length known
-                    total_ms = self.player.get_length()
-                    if total_ms and total_ms > 0:
-                        pos = float(time_ms) / float(total_ms)
-                        self.player.set_position(pos)
-                # Update UI immediately
-                self.update_progress_once()
+                    total_ms_local = 0
+                print(f"DEBUG: do_seek target_ms={target_ms} total_ms={total_ms_local}")
+                if VLC_AVAILABLE and self.player:
+                    if total_ms_local and target_ms and target_ms > int(total_ms_local):
+                        target_ms = int(total_ms_local)
+                    self.seeking = True
+                    try:
+                        print(f"DEBUG: attempting player.set_time({int(target_ms)})")
+                        self.player.set_time(int(target_ms))
+                        print("DEBUG: set_time called")
+                    except Exception:
+                        try:
+                            if total_ms_local and total_ms_local > 0:
+                                pos = float(target_ms) / float(total_ms_local)
+                                print(f"DEBUG: set_time failed, trying set_position({pos})")
+                                self.player.set_position(max(0.0, min(1.0, pos)))
+                        except Exception:
+                            print("DEBUG: fallback set_position failed")
+
+                    try:
+                        self.root.after(150, lambda: (setattr(self, 'seeking', False),
+                                                      self.update_progress_once()))
+                    except Exception:
+                        self.seeking = False
+                        try:
+                            self.update_progress_once()
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        messagebox.showinfo("Info", "Reproductor no disponible para realizar seek")
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"DEBUG: do_seek exception: {e}")
+                try:
+                    self.seeking = False
+                except Exception:
+                    pass
+
+        # Debug info
+        try:
+            print(f"DEBUG: seek_to_selected_thumbnail called frame_pos={frame_pos}"
+                  f" time_ms={time_ms} VLC_AVAILABLE={VLC_AVAILABLE}"
+                  f" player_exists={bool(self.player)}")
+        except Exception:
+            pass
+
+        # If the player's current media is not the selected video, load it first
+        try:
+            need_load = False
+            if VLC_AVAILABLE and self.player:
+                try:
+                    current_media = self.player.get_media()
+                    current_mrl = current_media.get_mrl() if current_media is not None else None
+                except Exception:
+                    current_mrl = None
+                try:
+                    selected_mrl = Path(filepath).as_uri()
+                except Exception:
+                    selected_mrl = None
+
+                if not current_mrl or (selected_mrl and current_mrl != selected_mrl):
+                    need_load = True
+            else:
+                need_load = False
+        except Exception:
+            need_load = False
+
+        if need_load:
+            # Load and play selected video, then schedule seek after a short delay
+            try:
+                # play_selected_video will set media and start playback
+                self.play_selected_video()
+                # Schedule the seek after giving VLC time to load media
+                try:
+                    self.root.after(400, lambda: do_seek(time_ms))
+                except Exception:
+                    do_seek(time_ms)
+            except Exception as e:
+                print(f"DEBUG: failed to load media before seek: {e}")
+                do_seek(time_ms)
+        else:
+            do_seek(time_ms)
+
+
+    def _on_timeline_generation_complete(self, results, fps):
+        """Called on main thread when background worker finishes. Results is list of (frame_pos, thumb_path, time_str)."""
+        try:
+            # mark completion
+            self._on_timeline_generation_complete_called = True
+
+            # Destroy the progress container if one was created and stored
+            try:
+                pc = getattr(self, '_timeline_progress_container', None)
+                if pc:
+                    try:
+                        pc.destroy()
+                    except Exception:
+                        pass
+                    # remove the reference
+                    try:
+                        delattr = getattr(self, '__dict__', None)
+                        if delattr is not None and '_timeline_progress_container' in self.__dict__:
+                            del self.__dict__['_timeline_progress_container']
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Build pages
+            page_size = getattr(self, 'timeline_page_size', 24)
+            pages = [results[i:i + page_size] for i in range(0, len(results), page_size)]
+            self.timeline_pages = pages
+            self.timeline_current_page = 0
+            if self.timeline_pages:
+                # render first page
+                try:
+                    self._render_timeline_page(0)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1861,12 +2154,7 @@ class VideoManagerApp:
         self.db.close()
         self.root.destroy()
 
-    def seek_to_selected_thumbnail(self):
-        """Button callback: seek to time of selected timeline thumbnail."""
-        try:
-            return self.set_selected_thumbnail_as_default()
-        except Exception:
-            return None
+    # redundant wrapper removed — seek implemented in seek_to_selected_thumbnail above
 
     def add_four_more_thumbnails_if_long(self):
         """Añade 4 miniaturas adicionales si la duración del video es > 15 minutos.
@@ -2054,6 +2342,14 @@ class VideoManagerApp:
 
                 img_label = tk.Label(thumb_frame, image=photo, bg='#34495e')
                 img_label.pack(padx=2, pady=2)
+                # Bind clicks so the thumbnail can be selected and used to seek
+                try:
+                    img_label.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo,
+                                   tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                    thumb_frame.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo,
+                                     tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                except Exception:
+                    pass
 
                 # Compute and show time label
                 try:
