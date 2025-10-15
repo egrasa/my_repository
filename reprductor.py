@@ -269,6 +269,12 @@ class VideoManagerApp:
         self.selected_timeline_thumb = None
         self.selected_timeline_thumbnail = None
         self.fps_label = None
+        self.last_timeline_frame_positions = set()
+        self._timeline_worker_progress = None
+        self._timeline_worker_total = None
+        self._on_timeline_generation_complete_called = False
+        self.timeline_pages = 0
+        self.timeline_current_page = 0
 
 
         # Directorio para miniaturas
@@ -623,8 +629,8 @@ class VideoManagerApp:
             self.root.bind('<Control-M>', lambda e: self.step_frame_forward())
             self.root.bind('<Control-n>', lambda e: self.step_frame_back())
             self.root.bind('<Control-N>', lambda e: self.step_frame_back())
-        except Exception:
-            # If binding fails, don't block the UI
+        except tk.TclError:
+            # If binding fails due to Tkinter/Tcl errors, don't block the UI
             pass
 
         # Panel de detalles
@@ -804,12 +810,13 @@ class VideoManagerApp:
                             except Exception:
                                 duration = 0
                     # If DB has no duration, try to compute from file
-                    if (not duration or duration <= 0) and self.current_video and len(self.current_video) > 1:
+                    if (not duration or duration <= 0) and self.current_video and len(
+                        self.current_video) > 1:
                         try:
                             duration = float(self.get_video_duration(self.current_video[1]) or 0)
                         except Exception:
                             duration = duration or 0
-                    if duration > (15 * 60):
+                    if duration > (10 * 60):
                         self.add_four_btn.config(state='normal')
                     else:
                         self.add_four_btn.config(state='disabled')
@@ -969,7 +976,8 @@ class VideoManagerApp:
             # La duración se mantiene visible
 
     def seek_relative(self, seconds):
-        """Seek relativo (segundos) desde la posición actual. Positive -> avanzar, negative -> retroceder."""
+        """Seek relativo (segundos) desde la posición actual.
+        Positive -> avanzar, negative -> retroceder."""
         if not VLC_AVAILABLE or not self.player:
             return
         try:
@@ -1260,7 +1268,8 @@ class VideoManagerApp:
         """Ordena la Treeview por la columna `col`, alternando asc/desc."""
         try:
             # Obtener items actuales
-            items = [(self.video_tree.set(k, col) if col != '#0' else k, k) for k in self.video_tree.get_children('')]
+            items = [(self.video_tree.set(k, col) if col != '#0' else k, k
+                      ) for k in self.video_tree.get_children('')]
 
             # Detectar si la columna es numérica (duration o rating or id)
             def try_float(v):
@@ -1424,7 +1433,8 @@ class VideoManagerApp:
             return None
         except Exception as e:
             # Captura cualquier otra excepción (incluyendo errores de OpenCV)
-            # Usamos Exception aquí para asegurar que solo se capturen excepciones que hereden de Exception
+            # Usamos Exception aquí para asegurar que solo
+            # se capturen excepciones que hereden de Exception
             print(f"Error generando miniatura: {e}")
             return None
 
@@ -1704,9 +1714,11 @@ class VideoManagerApp:
                                 thumb_path = self.thumbnail_dir / thumb_name
                                 if not thumb_path.exists():
                                     img_resized.save(thumb_path, 'JPEG', quality=85)
-                                results.append((int(frame_pos), str(thumb_path), self.format_duration(int(frame_pos / fps))))
+                                results.append((int(frame_pos), str(thumb_path),
+                                                self.format_duration(int(frame_pos / fps))))
                             except Exception:
-                                results.append((int(frame_pos), None, self.format_duration(int(frame_pos / fps))))
+                                results.append((int(frame_pos), None,
+                                                self.format_duration(int(frame_pos / fps))))
                         except Exception:
                             pass
                         # update progress counter
@@ -1731,8 +1743,11 @@ class VideoManagerApp:
             def poll_progress():
                 try:
                     # update label
-                    progress_label.config(text=f"Generando miniaturas... ({self._timeline_worker_progress}/{self._timeline_worker_total})")
-                    if hasattr(self, '_on_timeline_generation_complete_called') and self._on_timeline_generation_complete_called:
+                    progress_label.config(text=f"Generando miniaturas... "
+                                          f"({self._timeline_worker_progress}/"
+                                          f"{self._timeline_worker_total})")
+                    if hasattr(self, '_on_timeline_generation_complete_called'
+                               ) and self._on_timeline_generation_complete_called:
                         try:
                             progress_container.destroy()
                         except Exception:
@@ -1753,7 +1768,6 @@ class VideoManagerApp:
             # Synchronous rendering removed: thumbnail generation runs in the background thread
             # and results are handled in _on_timeline_generation_complete, which will destroy
             # the progress container stored in self._timeline_progress_container.
-            return
 
         except (OSError, ValueError, tk.TclError) as e:
             messagebox.showerror("Error", f"Error generando timeline: {e}")
@@ -1778,8 +1792,9 @@ class VideoManagerApp:
             # Catch only expected exceptions raised during event handling / canvas operations
             print(f"Error handling mouse wheel event: {e}")
 
-    def _on_timeline_generation_complete(self, results, fps):
-        """Called on main thread when background worker finishes. Results is list of (frame_pos, thumb_path, time_str)."""
+    def _on_timeline_generation_complete(self, results, _fps):
+        """Called on main thread when background worker finishes.
+        Results is list of (frame_pos, thumb_path, time_str)."""
         try:
             # mark completion
             self._on_timeline_generation_complete_called = True
@@ -1824,9 +1839,17 @@ class VideoManagerApp:
             nav_frame = tk.Frame(self.preview_inner_frame, bg='#2c3e50')
             nav_frame.grid(row=0, column=0, columnspan=ncols, sticky='ew', pady=6)
             try:
-                prev_btn = ttk.Button(nav_frame, text='◀', command=lambda: self._render_timeline_page(max(0, page_index - 1)))
-                next_btn = ttk.Button(nav_frame, text='▶', command=lambda: self._render_timeline_page(min(len(pages) - 1, page_index + 1)))
-                page_lbl = tk.Label(nav_frame, text=f"Página {page_index + 1}/{len(pages)}", bg='#2c3e50', fg='white')
+                prev_btn = ttk.Button(nav_frame,
+                                      text='◀',
+                                      command=lambda: self._render_timeline_page(
+                                          max(0, page_index - 1)))
+                next_btn = ttk.Button(nav_frame,
+                                      text='▶',
+                                      command=lambda: self._render_timeline_page(
+                                          min(len(pages) - 1, page_index + 1)))
+                page_lbl = tk.Label(nav_frame,
+                                    text=f"Página {page_index + 1}/{len(pages)}",
+                                    bg='#2c3e50', fg='white')
                 prev_btn.pack(side='left')
                 page_lbl.pack(side='left', expand=True)
                 next_btn.pack(side='right')
@@ -1851,7 +1874,8 @@ class VideoManagerApp:
                 row = (idx // ncols) + 1
                 col = idx % ncols
 
-                thumb_frame = tk.Frame(self.preview_inner_frame, bg='#34495e', relief='raised', borderwidth=2)
+                thumb_frame = tk.Frame(self.preview_inner_frame,
+                                       bg='#34495e', relief='raised', borderwidth=2)
                 thumb_frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
 
                 photo = None
@@ -1882,7 +1906,8 @@ class VideoManagerApp:
 
                 # Time label
                 try:
-                    tlabel = tk.Label(thumb_frame, text=str(time_str), bg='#34495e', fg='white', font=('Arial', 9, 'bold'))
+                    tlabel = tk.Label(thumb_frame, text=str(time_str), bg='#34495e', fg='white',
+                                      font=('Arial', 9, 'bold'))
                     tlabel.pack()
                 except Exception:
                     pass
@@ -1890,8 +1915,10 @@ class VideoManagerApp:
                 # Bind click to select and enable seek
                 try:
                     # Capture current references in default args
-                    img_label.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo, tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
-                    thumb_frame.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo, tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                    img_label.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo,
+                                   tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
+                    thumb_frame.bind('<Button-1>', lambda e, fp=int(frame_pos), ph=photo,
+                                     tf=thumb_frame: self.on_timeline_thumb_click(fp, ph, tf))
                 except Exception:
                     pass
 
@@ -1921,7 +1948,8 @@ class VideoManagerApp:
             pass
 
     def on_timeline_thumb_click(self, frame_pos, photoimage, thumb_frame):
-        """Marca una miniatura del timeline como seleccionada para usarla como miniatura principal."""
+        """Marca una miniatura del timeline como seleccionada
+        para usarla como miniatura principal."""
         try:
             # Limpiar selección anterior visual
             if self.selected_timeline_thumb and 'widget' in self.selected_timeline_thumb:
@@ -2109,7 +2137,8 @@ class VideoManagerApp:
 
 
     def _on_timeline_generation_complete(self, results, fps):
-        """Called on main thread when background worker finishes. Results is list of (frame_pos, thumb_path, time_str)."""
+        """Called on main thread when background worker finishes.
+        Results is list of (frame_pos, thumb_path, time_str)."""
         try:
             # mark completion
             self._on_timeline_generation_complete_called = True
@@ -2122,11 +2151,14 @@ class VideoManagerApp:
                         pc.destroy()
                     except Exception:
                         pass
-                    # remove the reference
+                    # remove the reference without shadowing built-ins
                     try:
-                        delattr = getattr(self, '__dict__', None)
-                        if delattr is not None and '_timeline_progress_container' in self.__dict__:
-                            del self.__dict__['_timeline_progress_container']
+                        d = getattr(self, '__dict__', {})
+                        if '_timeline_progress_container' in d:
+                            try:
+                                del d['_timeline_progress_container']
+                            except Exception:
+                                pass
                     except Exception:
                         pass
             except Exception:
