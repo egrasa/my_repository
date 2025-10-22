@@ -34,9 +34,17 @@ class TaskManagerApp:
         self.done_var = tk.IntVar(value=0)
         self.filter_var = tk.StringVar(value="All")
         self.current_category_filter = "All"
+        # stringvar to show sum of visible totals
+        self.total_sum_var = tk.StringVar(value="Total: $0.00")
 
         # column sort state: True means ascending next time
         self._sort_state = {}
+        # category -> tag mapping and palette
+        self._category_tag_map = {}
+        # pleasant pastel palette for categories
+        self._palette = [
+            '#F9C2C2', '#F9E2C2', '#F9F0C2', '#DFF9C2', '#C2F9E1', '#C2E9F9', '#C2C9F9', '#E8C2F9', '#F9C2E6'
+        ]
 
         self._build_ui()
         self._load_tasks()
@@ -61,16 +69,13 @@ class TaskManagerApp:
         ttk.Label(form, text="Level:").grid(row=2, column=0, sticky=tk.W)
         ttk.Spinbox(form, from_=0, to=10, textvariable=self.level_var, width=6).grid(row=2, column=1, sticky=tk.W)
 
-        # Count (done) with Spinbox and larger +/- buttons
-        #ttk.Label(form, text="Count:").grid(row=2, column=2, sticky=tk.W)
-        #ttk.Spinbox(form, from_=0, to=9999, textvariable=self.done_var, width=8).grid(row=2, column=3, sticky=tk.W)
-
         # Buttons
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=tk.X, pady=(0, 8))
         ttk.Button(btn_frame, text="Add Task", command=self._add_task).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="Edit Task", command=self._edit_task).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="Delete Task", command=self._delete_task).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Reset Counts", command=self._reset_all_counts).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="Clear Form", command=self._clear_form).pack(side=tk.RIGHT)
 
         # Category filter
@@ -86,6 +91,12 @@ class TaskManagerApp:
         plus_btn.pack(side='right', padx=(8, 0))
         minus_btn = tk.Button(filter_frame, text="-", width=3, font=big_btn_font, command=self._dec_count)
         minus_btn.pack(side='right', padx=(8, 0))
+
+        # sum of totals label (placed under the filter controls)
+        sum_frame = ttk.Frame(frame)
+        sum_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(sum_frame, text="Sum of visible Totals:").pack(side=tk.LEFT)
+        ttk.Label(sum_frame, textvariable=self.total_sum_var).pack(side=tk.LEFT, padx=(6, 0))
 
         # Task list with computed Total column
         cols = ("title", "category", "price", "total", "level", "done")
@@ -116,6 +127,7 @@ class TaskManagerApp:
         # populate category filter choices
         self._populate_category_filter(tasks)
 
+        sum_total = 0.0
         for t in tasks:
             if self.current_category_filter and self.current_category_filter != "All":
                 if t.get("category") != self.current_category_filter:
@@ -125,8 +137,59 @@ class TaskManagerApp:
             price = float(t.get("price", 0.0) or 0.0)
             count = int(t.get("done", 0) or 0)
             total = price * count
+            sum_total += total
             values = (t.get("title", ""), t.get("category", ""), f"{price:.2f}", f"{total:.2f}", str(t.get("level", "")), str(count))
-            self.tree.insert("", tk.END, iid=tid, values=values)
+            # ensure there's a tag for this category and use it for row coloring
+            cat = t.get("category") or ""
+            tag = self._ensure_tag_for_category(cat)
+            self.tree.insert("", tk.END, iid=tid, values=values, tags=(tag,))
+        # update total sum label for currently visible rows
+        try:
+            self.total_sum_var.set(f"${sum_total:,.2f}")
+        except (ValueError, TypeError):
+            self.total_sum_var.set("$0.00")
+
+    def _reset_all_counts(self):
+        """Ask for confirmation and reset all tasks' done counters to zero."""
+        if not messagebox.askyesno("Reset all counts", "Set all task counters to 0? This action cannot be undone."):
+            return
+        # fetch all tasks and set done=0
+        tasks = self.db.list_tasks()
+        updated = 0
+        for t in tasks:
+            tid = int(t.get("id") or t.get("rowid"))
+            try:
+                self.db.update_task(tid, done=0)
+                updated += 1
+            except (ValueError, TypeError):
+                # ignore individual update failures but continue
+                continue
+        self._populate_category_filter()
+        self._load_tasks()
+        messagebox.showinfo("Reset complete", f"Reset counters to 0 for {updated} tasks")
+
+    def _ensure_tag_for_category(self, category: str) -> str:
+        """Return a tag name for a category, creating and configuring it if needed.
+
+        The color is chosen deterministically from a small palette.
+        """
+        # normalize empty
+        cat_key = category or "__none__"
+        if cat_key in self._category_tag_map:
+            return self._category_tag_map[cat_key]
+
+        # deterministic pick based on hash
+        color = self._palette[abs(hash(cat_key)) % len(self._palette)]
+        # small stable tag name
+        tag_name = f"cat_{abs(hash(cat_key)) % 100000}"
+        try:
+            # configure tag background
+            self.tree.tag_configure(tag_name, background=color)
+        except tk.TclError:
+            # if the underlying theme/widget doesn't support it, ignore
+            pass
+        self._category_tag_map[cat_key] = tag_name
+        return tag_name
 
     def _populate_category_filter(self, tasks=None):
         if tasks is None:
