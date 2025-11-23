@@ -237,7 +237,15 @@ class AnalizadorVideosApp:
 
         # Pestaña para archivos AVI
         self.frame_avi = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.frame_avi, text="Archivos AVI")
+        self.notebook.add(self.frame_avi, text=" AVI")
+
+        # Pestaña para archivos MOV (misma funcionalidad que AVI)
+        self.frame_mov = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.frame_mov, text=" MOV")
+
+        # Pestaña para archivos MKV (definida justo después de MOV)
+        self.frame_mkv = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.frame_mkv, text=" MKV")
 
         # Pestaña para gráficos
         self.frame_graficos = ttk.Frame(self.notebook, padding=10)
@@ -292,6 +300,99 @@ class AnalizadorVideosApp:
         scroll_avi.pack(side="right", fill="y")
         self.texto_avi.configure(yscrollcommand=scroll_avi.set)
         self.texto_avi.config(font=("Consolas", 10))
+
+        # --- CONTENIDO PESTAÑA MOV (duplicado funcionalmente de AVI) ---
+        mov_buttons_frame = tk.Frame(self.frame_mov, bg=COLOR_FRAME)
+        mov_buttons_frame.pack(fill="x", pady=10)
+
+        # Botón para contar archivos MOV en subcarpetas
+        self.boton_contar_movs = tk.Button(mov_buttons_frame, text="Contar MOV", width=15,
+                           command=self.contar_movs_en_subcarpetas,
+                           bg=COLOR_BUTTON, fg=COLOR_PROGRESS, relief="flat",
+                           activebackground=COLOR_PROGRESS)
+        self.boton_contar_movs.pack(side="left", padx=5)
+
+        # Botón para mover archivos MOV a la carpeta 'mov'
+        self.boton_mov = tk.Button(mov_buttons_frame, text="Mover MOV", width=15,
+                       command=self.mover_movs_a_carpeta, relief="flat",
+                       bg=COLOR_BUTTON, fg=COLOR_PROGRESS,
+                       activebackground=COLOR_PROGRESS)
+        self.boton_mov.pack(side="left", padx=5)
+        self.boton_mov["state"] = "disabled"
+
+        # Botón para ver carpetas vacías (reutiliza la misma función)
+        self.boton_ver_vacias_mov = tk.Button(mov_buttons_frame, text="Ver Vacías", width=15,
+                              command=self.ver_carpetas_vacias, state="disabled",
+                              bg=COLOR_FRAME, fg=COLOR_TEXT,
+                              activebackground=COLOR_PROGRESS)
+        self.boton_ver_vacias_mov.pack(side="left", padx=5)
+
+        # Botón para buscar archivos MOV repetidos
+        self.boton_repetidos_mov = tk.Button(mov_buttons_frame, text="Buscar Repetidos", width=15,
+                            command=self.buscar_movs_repetidos, relief="flat",
+                            bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                            activebackground=COLOR_PROGRESS)
+        self.boton_repetidos_mov.pack(side="left", padx=5)
+
+        # Área de texto específica para la pestaña MOV
+        texto_mov_container = ttk.Frame(self.frame_mov)
+        texto_mov_container.pack(fill="both", expand=True, pady=(10,0), padx=8)
+        self.texto_mov = tk.Text(texto_mov_container, height=15, width=80, fg=COLOR_TEXT,
+                     bg=COLOR_BG, insertbackground=COLOR_LABEL,
+                     state="disabled", wrap="word", relief="flat")
+        self.texto_mov.pack(side="left", fill="both", expand=True)
+        # configure scrollbar for MOV text area
+        scroll_mov = ttk.Scrollbar(texto_mov_container, orient="vertical",
+                                   command=self.texto_mov.yview)
+        scroll_mov.pack(side="right", fill="y")
+        self.texto_mov.configure(yscrollcommand=scroll_mov.set)
+        self.texto_mov.config(font=("Consolas", 10))
+
+        # --- CONTENIDO PESTAÑA MKV (duplicado funcionalmente de AVI/MOV) ---
+        mkv_buttons_frame = tk.Frame(self.frame_mkv, bg=COLOR_FRAME)
+        mkv_buttons_frame.pack(fill="x", pady=10)
+
+        # Botón para contar archivos MKV en subcarpetas
+        self.boton_contar_mkvs = tk.Button(mkv_buttons_frame, text="Contar MKV", width=15,
+                           command=self.contar_mkvs_en_subcarpetas,
+                           bg=COLOR_BUTTON, fg=COLOR_PROGRESS, relief="flat",
+                           activebackground=COLOR_PROGRESS)
+        self.boton_contar_mkvs.pack(side="left", padx=5)
+
+        # Botón para mover archivos MKV a la carpeta 'mkv'
+        self.boton_mkv = tk.Button(mkv_buttons_frame, text="Mover MKV", width=15,
+                       command=self.mover_mkvs_a_carpeta, relief="flat",
+                       bg=COLOR_BUTTON, fg=COLOR_PROGRESS,
+                       activebackground=COLOR_PROGRESS)
+        self.boton_mkv.pack(side="left", padx=5)
+        self.boton_mkv["state"] = "disabled"
+
+        # Botón para ver carpetas vacías (reutiliza la misma función)
+        self.boton_ver_vacias_mkv = tk.Button(mkv_buttons_frame, text="Ver Vacías", width=15,
+                              command=self.ver_carpetas_vacias, state="disabled",
+                              bg=COLOR_FRAME, fg=COLOR_TEXT,
+                              activebackground=COLOR_PROGRESS)
+        self.boton_ver_vacias_mkv.pack(side="left", padx=5)
+
+        # Botón para buscar archivos MKV repetidos
+        self.boton_repetidos_mkv = tk.Button(mkv_buttons_frame, text="Buscar Repetidos", width=15,
+                            command=self.buscar_mkvs_repetidos, relief="flat",
+                            bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                            activebackground=COLOR_PROGRESS)
+        self.boton_repetidos_mkv.pack(side="left", padx=5)
+
+        # Área de texto específica para la pestaña MKV
+        texto_mkv_container = ttk.Frame(self.frame_mkv)
+        texto_mkv_container.pack(fill="both", expand=True, pady=(10,0), padx=8)
+        self.texto_mkv = tk.Text(texto_mkv_container, height=15, width=80, fg=COLOR_TEXT,
+                     bg=COLOR_BG, insertbackground=COLOR_LABEL,
+                     state="disabled", wrap="word", relief="flat")
+        self.texto_mkv.pack(side="left", fill="both", expand=True)
+        scroll_mkv = ttk.Scrollbar(texto_mkv_container, orient="vertical",
+                                   command=self.texto_mkv.yview)
+        scroll_mkv.pack(side="right", fill="y")
+        self.texto_mkv.configure(yscrollcommand=scroll_mkv.set)
+        self.texto_mkv.config(font=("Consolas", 10))
 
         # --- CONTENIDO PESTAÑA GRÁFICOS ---
         graficos_buttons_frame = tk.Frame(self.frame_graficos, bg=COLOR_FRAME)
@@ -414,6 +515,7 @@ class AnalizadorVideosApp:
         style.configure("TLabel", background=COLOR_FRAME, foreground=COLOR_LABEL)
         style.configure("TButton", background=COLOR_BUTTON, foreground=COLOR_BUTTON_TEXT)
 
+        # (La pestaña MKV ya se definió antes junto a MOV)
     def mostrar_grafico(self):
         """ Llama a la función global mostrar_grafico con los resultados actuales """
         mostrar_grafico(self.resultados, self.carpeta)
@@ -495,6 +597,15 @@ class AnalizadorVideosApp:
             self.boton_review["state"] = "normal"
             self.boton_xcut["state"] = "normal"
             self.boton_avi["state"] = "normal"
+            # enable MOV tab controls as well
+            try:
+                self.boton_mov["state"] = "normal"
+            except AttributeError:
+                pass
+            try:
+                self.boton_mkv["state"] = "normal"
+            except AttributeError:
+                pass
             self.boton_print_errores["state"] = "normal"
             self.boton_abrir_errores["state"] = "normal"
             threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
@@ -514,6 +625,18 @@ class AnalizadorVideosApp:
             self.boton_review["state"] = "disabled"
             self.boton_xcut["state"] = "disabled"
             self.boton_avi["state"] = "normal"
+            # enable MOV-specific buttons when a folder is selected
+            try:
+                self.boton_mov["state"] = "normal"
+                self.boton_ver_vacias_mov["state"] = "normal"
+            except AttributeError:
+                pass
+            # enable MKV-specific buttons when a folder is selected
+            try:
+                self.boton_mkv["state"] = "normal"
+                self.boton_ver_vacias_mkv["state"] = "normal"
+            except AttributeError:
+                pass
             self.boton_ver_vacias["state"] = "normal"
         else:
             self.boton_analizar["state"] = "disabled"
@@ -634,6 +757,335 @@ class AnalizadorVideosApp:
             # Ignorar errores específicos de tkinter al actualizar el widget Text
             pass
 
+    def contar_movs_en_subcarpetas(self):
+        """Cuenta todos los archivos .mov en la carpeta seleccionada y sus subcarpetas"""
+        if not self.carpeta:
+            self.label_resultado.config(text="Primero selecciona una carpeta.")
+            return
+        total_movs = 0
+        total_roots = 0
+        root_list = []
+        carpetas_con_movs = []
+        for root_dir, _, files in os.walk(self.carpeta):
+            movs_en_esta_carpeta = sum(1 for f in files if f.lower().endswith('.mov'))
+            total_movs += movs_en_esta_carpeta
+            if movs_en_esta_carpeta > 0:
+                total_roots += 1
+                carpetas_con_movs.append(root_dir)
+            root_list.append(root_dir)
+        self.label_resultado.config(text=f"Total - {total_movs} - archivos .mov  en "
+                                        f"{total_roots} carpetas de ({len(root_list)})")
+        try:
+            self.texto_mov.config(state="normal")
+            self.texto_mov.delete(1.0, tk.END)
+            if carpetas_con_movs:
+                self.texto_mov.insert(tk.END, "Carpetas con archivos .mov:\n")
+                for carpeta in carpetas_con_movs:
+                    self.texto_mov.insert(tk.END, carpeta + "\n")
+            else:
+                self.texto_mov.insert(tk.END, "No se encontraron carpetas con archivos .mov.\n")
+            self.texto_mov.config(state="disabled")
+        except tk.TclError:
+            pass
+        # also mirror to main text box
+        self.texto_archivos.config(state="normal")
+        self.texto_archivos.delete(1.0, tk.END)
+        if carpetas_con_movs:
+            self.texto_archivos.insert(tk.END, "Carpetas con archivos .mov:\n")
+            for carpeta in carpetas_con_movs:
+                self.texto_archivos.insert(tk.END, carpeta + "\n")
+        else:
+            self.texto_archivos.insert(tk.END, "No se encontraron carpetas con archivos .mov.\n")
+        self.texto_archivos.config(state="disabled")
+
+    def mover_movs_a_carpeta(self):
+        """Crea una carpeta 'mov' y mueve todos los archivos .mov
+        a esa carpeta dentro de la carpeta seleccionada."""
+        if not self.carpeta:
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
+            return
+
+        archivos_mov = [f for f in os.listdir(self.carpeta) if f.lower().endswith('.mov')]
+        nombre_carpeta1 = os.path.basename(self.carpeta) or self.carpeta
+
+        if not archivos_mov:
+            try:
+                self.texto_mov.config(state="normal")
+                self.texto_mov.insert(tk.END, f"-- {nombre_carpeta1} --   0 archivos .mov\n")
+                self.texto_mov.config(state="disabled")
+            except tk.TclError:
+                pass
+            print(f"-- {nombre_carpeta1} --", "   0 archivos .mov")
+            return
+
+        mov_dir = os.path.join(self.carpeta, "mov")
+        if not os.path.exists(mov_dir):
+            try:
+                os.makedirs(mov_dir)
+            except (OSError, shutil.Error) as e:
+                print(f"No se pudo crear la carpeta 'mov': {e}")
+                try:
+                    self.texto_mov.config(state="normal")
+                    self.texto_mov.insert(tk.END, f"Error creando carpeta 'mov': {e}\n")
+                    self.texto_mov.config(state="disabled")
+                except tk.TclError:
+                    pass
+                return
+
+        movidos = 0
+        for archivo in archivos_mov:
+            origen = os.path.join(self.carpeta, archivo)
+            destino = os.path.join(mov_dir, archivo)
+            try:
+                shutil.move(origen, destino)
+                movidos += 1
+                try:
+                    self.texto_mov.config(state="normal")
+                    self.texto_mov.insert(tk.END, f"Movido: {archivo} -> {mov_dir}\n")
+                    self.texto_mov.config(state="disabled")
+                except tk.TclError:
+                    pass
+            except (OSError, shutil.Error) as e:
+                print(f" //No se pudo mover {archivo}: {e}//")
+                try:
+                    self.texto_mov.config(state="normal")
+                    self.texto_mov.insert(tk.END, f"Error moviendo {archivo}: {e}\n")
+                    self.texto_mov.config(state="disabled")
+                except tk.TclError:
+                    pass
+
+        try:
+            self.texto_mov.config(state="normal")
+            self.texto_mov.insert(tk.END,
+                                  f"-- {nombre_carpeta1} --  Se movieron [ {movidos} ]"
+                                  " archivos .mov\n")
+            self.texto_mov.config(state="disabled")
+        except tk.TclError:
+            pass
+
+    def buscar_movs_repetidos(self):
+        """Busca archivos .mov que tengan el mismo nombre base pero con diferente extensión
+        y los mueve a una carpeta 'repeat'."""
+        if not self.carpeta:
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
+            return
+
+        extensiones_video = ('.mp4', '.avi', '.mkv', '.wmv', '.flv', '.webm')
+        archivos_repetidos = []
+
+        for root_dir, _, files in os.walk(self.carpeta):
+            archivos_mov = [f for f in files if f.lower().endswith('.mov')]
+
+            for archivo_mov in archivos_mov:
+                nombre_base = os.path.splitext(archivo_mov)[0]
+                for archivo in files:
+                    if archivo != archivo_mov and os.path.splitext(archivo)[0] == nombre_base:
+                        if archivo.lower().endswith(extensiones_video):
+                            archivos_repetidos.append((os.path.join(root_dir, archivo_mov),
+                                                       root_dir))
+                            break
+
+        if not archivos_repetidos:
+            print("No se encontraron archivos .mov repetidos.")
+            try:
+                self.texto_mov.config(state="normal")
+                self.texto_mov.insert(tk.END, "No se encontraron archivos .mov repetidos.\n")
+                self.texto_mov.config(state="disabled")
+            except tk.TclError:
+                pass
+            return
+
+        movidos = 0
+        for ruta_mov, carpeta_origen in archivos_repetidos:
+            repeat_dir = os.path.join(carpeta_origen, "repeat")
+            if not os.path.exists(repeat_dir):
+                os.makedirs(repeat_dir)
+
+            nombre_archivo = os.path.basename(ruta_mov)
+            destino = os.path.join(repeat_dir, nombre_archivo)
+
+            try:
+                shutil.move(ruta_mov, destino)
+                movidos += 1
+                print(f"Movido: {nombre_archivo} -> repeat/")
+                try:
+                    self.texto_mov.config(state="normal")
+                    self.texto_mov.insert(tk.END, f"Movido: {nombre_archivo} -> {repeat_dir}\n")
+                    self.texto_mov.config(state="disabled")
+                except tk.TclError:
+                    pass
+            except (OSError, shutil.Error) as e:
+                print(f"No se pudo mover {nombre_archivo}: {e}")
+                try:
+                    self.texto_mov.config(state="normal")
+                    self.texto_mov.insert(tk.END, f"No se pudo mover {nombre_archivo}: {e}\n")
+                    self.texto_mov.config(state="disabled")
+                except tk.TclError:
+                    pass
+
+        try:
+            self.texto_mov.config(state="normal")
+            self.texto_mov.insert(tk.END,
+                                  f"Se movieron {movidos} archivos .mov repetidos"
+                                  " a carpetas 'repeat'.\n")
+            self.texto_mov.config(state="disabled")
+        except tk.TclError:
+            pass
+
+    def contar_mkvs_en_subcarpetas(self):
+        """Cuenta todos los archivos .mkv en la carpeta seleccionada y sus subcarpetas"""
+        if not self.carpeta:
+            self.label_resultado.config(text="Primero selecciona una carpeta.")
+            return
+        total = 0
+        total_roots = 0
+        root_list = []
+        carpetas = []
+        for root_dir, _, files in os.walk(self.carpeta):
+            mkvs = sum(1 for f in files if f.lower().endswith('.mkv'))
+            total += mkvs
+            if mkvs > 0:
+                total_roots += 1
+                carpetas.append(root_dir)
+            root_list.append(root_dir)
+        self.label_resultado.config(text=f"Total - {total} - archivos .mkv"
+                                    f"  en {total_roots} carpetas de ({len(root_list)})")
+        try:
+            self.texto_mkv.config(state="normal")
+            self.texto_mkv.delete(1.0, tk.END)
+            if carpetas:
+                self.texto_mkv.insert(tk.END, "Carpetas con archivos .mkv:\n")
+                for c in carpetas:
+                    self.texto_mkv.insert(tk.END, c + "\n")
+            else:
+                self.texto_mkv.insert(tk.END, "No se encontraron carpetas con archivos .mkv.\n")
+            self.texto_mkv.config(state="disabled")
+        except tk.TclError:
+            pass
+        self.texto_archivos.config(state="normal")
+        self.texto_archivos.delete(1.0, tk.END)
+        if carpetas:
+            self.texto_archivos.insert(tk.END, "Carpetas con archivos .mkv:\n")
+            for c in carpetas:
+                self.texto_archivos.insert(tk.END, c + "\n")
+        else:
+            self.texto_archivos.insert(tk.END, "No se encontraron carpetas con archivos .mkv.\n")
+        self.texto_archivos.config(state="disabled")
+
+    def mover_mkvs_a_carpeta(self):
+        """Crea una carpeta 'mkv' y mueve todos los archivos .mkv a esa carpeta
+        dentro de la carpeta seleccionada."""
+        if not self.carpeta:
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
+            return
+        archivos = [f for f in os.listdir(self.carpeta) if f.lower().endswith('.mkv')]
+        nombre_carpeta1 = os.path.basename(self.carpeta) or self.carpeta
+        if not archivos:
+            try:
+                self.texto_mkv.config(state="normal")
+                self.texto_mkv.insert(tk.END, f"-- {nombre_carpeta1} --   0 archivos .mkv\n")
+                self.texto_mkv.config(state="disabled")
+            except tk.TclError:
+                pass
+            print(f"-- {nombre_carpeta1} --", "   0 archivos .mkv")
+            return
+        mkv_dir = os.path.join(self.carpeta, "mkv")
+        if not os.path.exists(mkv_dir):
+            try:
+                os.makedirs(mkv_dir)
+            except (OSError, shutil.Error) as e:
+                try:
+                    self.texto_mkv.config(state="normal")
+                    self.texto_mkv.insert(tk.END, f"Error creando carpeta 'mkv': {e}\n")
+                    self.texto_mkv.config(state="disabled")
+                except tk.TclError:
+                    pass
+                return
+        movidos = 0
+        for archivo in archivos:
+            origen = os.path.join(self.carpeta, archivo)
+            destino = os.path.join(mkv_dir, archivo)
+            try:
+                shutil.move(origen, destino)
+                movidos += 1
+                try:
+                    self.texto_mkv.config(state="normal")
+                    self.texto_mkv.insert(tk.END, f"Movido: {archivo} -> {mkv_dir}\n")
+                    self.texto_mkv.config(state="disabled")
+                except tk.TclError:
+                    pass
+            except (OSError, shutil.Error) as e:
+                try:
+                    self.texto_mkv.config(state="normal")
+                    self.texto_mkv.insert(tk.END, f"Error moviendo {archivo}: {e}\n")
+                    self.texto_mkv.config(state="disabled")
+                except tk.TclError:
+                    pass
+        try:
+            self.texto_mkv.config(state="normal")
+            self.texto_mkv.insert(tk.END, f"-- {nombre_carpeta1} --"
+                                  f"  Se movieron [ {movidos} ] archivos .mkv\n")
+            self.texto_mkv.config(state="disabled")
+        except tk.TclError:
+            pass
+
+    def buscar_mkvs_repetidos(self):
+        """Busca archivos .mkv que tengan el mismo nombre base
+        pero con diferente extensión y los mueve a 'repeat'."""
+        if not self.carpeta:
+            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
+            return
+        extensiones_video = ('.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm')
+        repetidos = []
+        for root_dir, _, files in os.walk(self.carpeta):
+            mkvs = [f for f in files if f.lower().endswith('.mkv')]
+            for archivo_mkv in mkvs:
+                base = os.path.splitext(archivo_mkv)[0]
+                for archivo in files:
+                    if archivo != archivo_mkv and os.path.splitext(archivo)[0] == base:
+                        if archivo.lower().endswith(extensiones_video):
+                            repetidos.append((os.path.join(root_dir, archivo_mkv), root_dir))
+                            break
+        if not repetidos:
+            try:
+                self.texto_mkv.config(state="normal")
+                self.texto_mkv.insert(tk.END, "No se encontraron archivos .mkv repetidos.\n")
+                self.texto_mkv.config(state="disabled")
+            except tk.TclError:
+                pass
+            return
+        movidos = 0
+        for ruta, carpeta_origen in repetidos:
+            repeat_dir = os.path.join(carpeta_origen, "repeat")
+            if not os.path.exists(repeat_dir):
+                os.makedirs(repeat_dir)
+            nombre = os.path.basename(ruta)
+            destino = os.path.join(repeat_dir, nombre)
+            try:
+                shutil.move(ruta, destino)
+                movidos += 1
+                try:
+                    self.texto_mkv.config(state="normal")
+                    self.texto_mkv.insert(tk.END, f"Movido: {nombre} -> {repeat_dir}\n")
+                    self.texto_mkv.config(state="disabled")
+                except tk.TclError:
+                    pass
+            except (OSError, shutil.Error) as e:
+                try:
+                    self.texto_mkv.config(state="normal")
+                    self.texto_mkv.insert(tk.END, f"No se pudo mover {nombre}: {e}\n")
+                    self.texto_mkv.config(state="disabled")
+                except tk.TclError:
+                    pass
+        try:
+            self.texto_mkv.config(state="normal")
+            self.texto_mkv.insert(tk.END, f"Se movieron {movidos} archivos .mkv"
+                                  " repetidos a carpetas 'repeat'.\n")
+            self.texto_mkv.config(state="disabled")
+        except tk.TclError:
+            pass
+
+
     def mostrar_histograma_duraciones(self):
         """Muestra un histograma de la distribución de duraciones de los vídeos analizados."""
         if not self.resultados:
@@ -654,7 +1106,7 @@ class AnalizadorVideosApp:
         con puntos y outliers anotados. La caja central es semitransparente
         para que se vean todos los puntos debajo / encima."""
         if not self.resultados:
-            messagebox.showinfo("Sin datos", "No hay vídeos válidos para graficar.")
+            messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
         # calcular ratios y mantener nombres para anotaciones
         ratios = []
@@ -665,7 +1117,7 @@ class AnalizadorVideosApp:
                 ratios.append(ratio)
                 labels.append((nombre, ratio))
         if not ratios:
-            messagebox.showinfo("Sin datos", "No hay ratios válidos (duración 0).")
+            messagebox.askokcancel("Sin datos", "No hay ratios válidos (duración 0).")
             return
 
         # Elegir estilo disponible (fallback seguro)
