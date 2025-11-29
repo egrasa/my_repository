@@ -1,11 +1,13 @@
 """ Analizador de vídeos contenidos en una carpeta """
 
+import errno
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import time
 import os
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, CancelledError
 import numpy as np
 import matplotlib.pyplot as plt
 from moviepy import VideoFileClip
@@ -20,28 +22,10 @@ COLOR_BUTTON = "#36393f"
 COLOR_BUTTON_TEXT = "#e0e0e0"
 COLOR_BUTTON_STOP = "#f04747"
 COLOR_PROGRESS = "#7289da"
+COLOR_TAB_DISABLED = "#7a848d"
+COLOR_BUTTON_HIGHLIGHT = "#ff8c00"
 
 lista_de_errores = list()  # Para almacenar errores únicos
-lista_de_analizados = list()  # Para almacenar archivos analizados
-
-def analizar_videos_en_carpeta(carpeta):
-    """ Analiza los vídeos en la carpeta especificada y devuelve una lista de tuplas con nombre, 
-    duración y peso """
-    extensiones_video = ('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm')
-    archivos = [f for f in os.listdir(carpeta) if f.lower().endswith(extensiones_video)]
-    resultados = []
-    for archivo in archivos:
-        ruta = os.path.join(carpeta, archivo)
-        try:
-            clip = VideoFileClip(ruta)
-            duracion = clip.duration / 60  # minutos
-            peso = os.path.getsize(ruta) / (1024 * 1024)  # MB
-            resultados.append((archivo, duracion, peso))
-            clip.close()
-        except (OSError, ValueError) as e:
-            lista_de_errores.append(archivo)
-            lista_de_errores.append(str(e))
-    return resultados
 
 def mostrar_grafico_visual(resultados, carpeta):
     """Muestra una gráfica de barras: eje X=nombre archivo, 
@@ -79,6 +63,8 @@ def mostrar_grafico_visual(resultados, carpeta):
 
     # Línea horizontal en 80 MB/min
     ax.axhline(80, color='red', linestyle='--', linewidth=1.5, label='80 MB/min')
+    # Línea horizontal en 150 MB/min para resaltar el umbral de optimización
+    ax.axhline(150, color='purple', linestyle='--', linewidth=1.5, label='150 MB/min')
     ax.legend()
 
     plt.tight_layout()
@@ -152,6 +138,9 @@ def mostrar_grafico(resultados, carpeta):
         x_vals = [min(duraciones), max(duraciones)]
         y_vals = [x * 80 for x in x_vals]
         ax.plot(x_vals, y_vals, "g-.", label="80 MB/min")
+        # Línea de 150 MB/min (umbral de optimizar)
+        y_vals_150 = [x * 150 for x in x_vals]
+        ax.plot(x_vals, y_vals_150, "m--", label="150 MB/min")
 
     ax.set_xlabel("Duración (minutos)")
     ax.set_ylabel("Tamaño (MB)")
@@ -171,7 +160,6 @@ class ToolTip:
 
     def show_tip(self, event=None):
         """Muestra el tooltip"""
-        lista_de_errores.append(event.widget)
         if self.tipwindow or not self.text:
             return
         x, y, _, cy = self.widget.bbox("insert") if self.widget.winfo_ismapped() else (0, 0, 0, 0)
@@ -188,7 +176,6 @@ class ToolTip:
 
     def hide_tip(self, event=None):
         """Oculta el tooltip"""
-        lista_de_errores.remove(event.widget)
         tw = self.tipwindow
         self.tipwindow = None
         if tw:
@@ -200,6 +187,10 @@ class AnalizadorVideosApp:
         self.root = master
         self.root.title("Analizador de vídeos")
         self.resultados = []
+        self.preview_counts = {}
+        self.videos_problema = []
+        self._analysis_executor = None
+        self._analisis_future = None
         self.carpeta = None  # Inicializar el atributo carpeta
         self._parar_analisis = False  # Control de parada
 
@@ -213,11 +204,12 @@ class AnalizadorVideosApp:
         frame_dir = tk.Frame(self.frame_principal, bg=COLOR_FRAME)
         frame_dir.pack(fill="x", pady=2)
 
-        self.boton = tk.Button(frame_dir, text="Carpeta...", width=15,
-                               command=self.seleccionar_carpeta, height=2,
-                               bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
-                               activebackground=COLOR_PROGRESS)
+        self.boton = tk.Button(frame_dir, text="    📁    Carpeta ", width=15,
+                       command=self.seleccionar_carpeta, height=2,
+                       bg=COLOR_BUTTON_HIGHLIGHT, fg=COLOR_BUTTON_TEXT,
+                       activebackground=COLOR_PROGRESS)
         self.boton.pack(side="left", padx=(0, 5))
+        ToolTip(self.boton, "Selecciona la carpeta raíz para analizar")
 
         self.carpeta_var = tk.StringVar()
         self.label_carpeta = tk.Label(frame_dir, textvariable=self.carpeta_var,
@@ -226,10 +218,18 @@ class AnalizadorVideosApp:
         self.label_carpeta.config(text="")  # Inicialmente vacío
 
         # Botón para iniciar el análisis (se crea aquí, pero se mostrará en la pestaña Resultados)
-        self.boton_analizar = tk.Button(frame_dir, text="Analizar", command=self.analizar_carpeta,
-                                        bg=COLOR_BUTTON, fg=COLOR_LABEL, width=10,
+        self.boton_analizar = tk.Button(frame_dir, text="   ▶ Analizar  ",
+                                        command=self.analizar_carpeta,
+                                        bg=COLOR_BUTTON, fg=COLOR_LABEL, width=14,
                                         activebackground=COLOR_PROGRESS, relief="ridge")
         self.boton_analizar["state"] = "disabled"
+        self.boton_previsualizar = tk.Button(frame_dir, text="  🔍 Pre-visualizar  ",
+                              command=self.previsualizar_resumen,
+                              bg=COLOR_BUTTON, fg=COLOR_LABEL, width=14,
+                              activebackground=COLOR_PROGRESS, relief="groove")
+        self.boton_previsualizar["state"] = "disabled"
+        ToolTip(self.boton_analizar, "Ejecuta el análisis completo sobre la carpeta seleccionada")
+        ToolTip(self.boton_previsualizar, "Resume rápidamente cuántos archivos hay por extensión")
 
         # Sistema de pestañas
         self.notebook = ttk.Notebook(master)
@@ -237,24 +237,31 @@ class AnalizadorVideosApp:
 
         # Pestaña para archivos AVI
         self.frame_avi = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.frame_avi, text=" AVI")
+        self.notebook.add(self.frame_avi, text="__AVI")
 
         # Pestaña para archivos MOV (misma funcionalidad que AVI)
         self.frame_mov = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.frame_mov, text=" MOV")
+        self.notebook.add(self.frame_mov, text="__MOV")
 
         # Pestaña para archivos MKV (definida justo después de MOV)
         self.frame_mkv = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.frame_mkv, text=" MKV")
+        self.notebook.add(self.frame_mkv, text="__MKV")
+
+        # Añadir pestaña separadora visual entre grupos de pestañas
+        self.frame_separador = ttk.Frame(self.notebook)
+        self.notebook.add(self.frame_separador, text=" ")
+        self.notebook.tab(self.frame_separador, state="disabled")
 
         # Pestaña para gráficos
         self.frame_graficos = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.frame_graficos, text="Gráficos")
+        self.notebook.add(self.frame_graficos, text=" - Gráficos - ")
 
         # Pestaña principal con resultados
         self.frame_resultados = ttk.Frame(self.notebook, padding=5)
-        self.notebook.add(self.frame_resultados, text="Resultados")
+        self.notebook.add(self.frame_resultados, text=" - Resultados - ")
 
+        # Empezar con las pestañas de formato desactivadas hasta saber qué archivos hay
+        self._actualizar_tabs_formatos({})
         # --- CONTENIDO PESTAÑA AVI ---
         avi_buttons_frame = tk.Frame(self.frame_avi, bg=COLOR_FRAME)
         avi_buttons_frame.pack(fill="x", pady=10)
@@ -274,12 +281,12 @@ class AnalizadorVideosApp:
         self.boton_avi.pack(side="left", padx=5)
         self.boton_avi["state"] = "disabled"
 
-        # Botón para ver carpetas vacías
-        self.boton_ver_vacias = tk.Button(avi_buttons_frame, text="Ver Vacías", width=15,
-                                          command=self.ver_carpetas_vacias, state="disabled",
-                                          bg=COLOR_FRAME, fg=COLOR_TEXT,
-                                          activebackground=COLOR_PROGRESS)
-        self.boton_ver_vacias.pack(side="left", padx=5)
+        # Etiqueta para mostrar resultados de conteo en la pestaña AVI
+        self.label_conteo_avi = tk.Label(self.frame_avi, text="", bg=COLOR_FRAME,
+                         fg=COLOR_LABEL, anchor="w")
+        self.label_conteo_avi.pack(fill="x", padx=8)
+
+        # (El botón global "Ver Vacías" se crea en la pestaña Resultados)
 
         # Botón para buscar archivos AVI repetidos
         self.boton_repetidos = tk.Button(avi_buttons_frame, text="Buscar Repetidos", width=15,
@@ -320,12 +327,7 @@ class AnalizadorVideosApp:
         self.boton_mov.pack(side="left", padx=5)
         self.boton_mov["state"] = "disabled"
 
-        # Botón para ver carpetas vacías (reutiliza la misma función)
-        self.boton_ver_vacias_mov = tk.Button(mov_buttons_frame, text="Ver Vacías", width=15,
-                              command=self.ver_carpetas_vacias, state="disabled",
-                              bg=COLOR_FRAME, fg=COLOR_TEXT,
-                              activebackground=COLOR_PROGRESS)
-        self.boton_ver_vacias_mov.pack(side="left", padx=5)
+        # (El botón global "Ver Vacías" se crea en la pestaña Resultados)
 
         # Botón para buscar archivos MOV repetidos
         self.boton_repetidos_mov = tk.Button(mov_buttons_frame, text="Buscar Repetidos", width=15,
@@ -333,6 +335,10 @@ class AnalizadorVideosApp:
                             bg=COLOR_BUTTON, fg=COLOR_TEXT,
                             activebackground=COLOR_PROGRESS)
         self.boton_repetidos_mov.pack(side="left", padx=5)
+
+        self.label_conteo_mov = tk.Label(self.frame_mov, text="", bg=COLOR_FRAME,
+                         fg=COLOR_LABEL, anchor="w")
+        self.label_conteo_mov.pack(fill="x", padx=8)
 
         # Área de texto específica para la pestaña MOV
         texto_mov_container = ttk.Frame(self.frame_mov)
@@ -367,12 +373,7 @@ class AnalizadorVideosApp:
         self.boton_mkv.pack(side="left", padx=5)
         self.boton_mkv["state"] = "disabled"
 
-        # Botón para ver carpetas vacías (reutiliza la misma función)
-        self.boton_ver_vacias_mkv = tk.Button(mkv_buttons_frame, text="Ver Vacías", width=15,
-                              command=self.ver_carpetas_vacias, state="disabled",
-                              bg=COLOR_FRAME, fg=COLOR_TEXT,
-                              activebackground=COLOR_PROGRESS)
-        self.boton_ver_vacias_mkv.pack(side="left", padx=5)
+        # (El botón global "Ver Vacías" se crea en la pestaña Resultados)
 
         # Botón para buscar archivos MKV repetidos
         self.boton_repetidos_mkv = tk.Button(mkv_buttons_frame, text="Buscar Repetidos", width=15,
@@ -380,6 +381,10 @@ class AnalizadorVideosApp:
                             bg=COLOR_BUTTON, fg=COLOR_TEXT,
                             activebackground=COLOR_PROGRESS)
         self.boton_repetidos_mkv.pack(side="left", padx=5)
+
+        self.label_conteo_mkv = tk.Label(self.frame_mkv, text="", bg=COLOR_FRAME,
+                         fg=COLOR_LABEL, anchor="w")
+        self.label_conteo_mkv.pack(fill="x", padx=8)
 
         # Área de texto específica para la pestaña MKV
         texto_mkv_container = ttk.Frame(self.frame_mkv)
@@ -398,13 +403,14 @@ class AnalizadorVideosApp:
         graficos_buttons_frame = tk.Frame(self.frame_graficos, bg=COLOR_FRAME)
         graficos_buttons_frame.pack(fill="x", pady=10)
 
-        self.boton_grafico = tk.Button(graficos_buttons_frame, text="Gráfico", relief="ridge",
+        self.boton_grafico = tk.Button(graficos_buttons_frame, text="📈 Gráfico", relief="ridge",
                                        command=self.mostrar_grafico, width=15,
                                        bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
                                        activebackground=COLOR_PROGRESS)
         self.boton_grafico.pack(side="left", padx=5)
+        ToolTip(self.boton_grafico, "Muestra duración vs peso para los archivos analizados")
 
-        self.boton_histograma = tk.Button(graficos_buttons_frame, text="Histograma", width=15,
+        self.boton_histograma = tk.Button(graficos_buttons_frame, text="📊 Histograma", width=15,
                                   command=self.mostrar_histograma_duraciones,
                                   bg=COLOR_BUTTON, fg=COLOR_TEXT, relief="ridge",
                                   activebackground=COLOR_PROGRESS, state="disabled")
@@ -424,6 +430,16 @@ class AnalizadorVideosApp:
                                        activebackground=COLOR_PROGRESS, relief="ridge")
         self.boton_boxplot.pack(side="left", padx=5)
 
+        self.boton_pie_previsualizar = tk.Button(graficos_buttons_frame,
+                             text="🥧 Pie Previsualizar", width=15,
+                             command=self.mostrar_pie_previsualizar,
+                             bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                             activebackground=COLOR_PROGRESS,
+                             relief="ridge", state="disabled")
+        self.boton_pie_previsualizar.pack(side="left", padx=5)
+        ToolTip(self.boton_pie_previsualizar,
+                "Grafica el resumen de extensiones generado por Pre-visualizar")
+
         # --- CONTENIDO PESTAÑA RESULTADOS ---
         # Frame para control y progreso
         self.frame3 = tk.Frame(self.frame_resultados, bg=COLOR_FRAME)
@@ -431,12 +447,23 @@ class AnalizadorVideosApp:
 
         # Añadir aquí el botón de Analizar dentro de la pestaña "Resultados"
         self.boton_parar = tk.Button(self.frame3, text="Parar", width=10,
-                                     command=self.parar_analisis,
-                                     bg=COLOR_BUTTON, fg=COLOR_BUTTON_STOP,
-                                     activebackground=COLOR_PROGRESS)
+                         command=self.parar_analisis,
+                         bg=COLOR_BUTTON, fg=COLOR_BUTTON_STOP,
+                         activebackground=COLOR_PROGRESS)
         # Empaquetar el botón "Analizar" junto al control de progreso
         # para que esté en la pestaña Resultados
         self.boton_analizar.pack(side="left", padx=5)
+        self.boton_previsualizar.pack(side="left", padx=5)
+
+        # Botón global para ver carpetas vacías (habilitado cuando se selecciona carpeta)
+        self.boton_ver_vacias_general = tk.Button(self.frame3, text="🧹 Ver Vacías", width=12,
+                                  command=self.ver_carpetas_vacias,
+                              bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                              activebackground=COLOR_PROGRESS, state="disabled")
+        self.boton_ver_vacias_general.pack(side="left", padx=5)
+        ToolTip(self.boton_ver_vacias_general,
+                "Lista carpetas vacías dentro de la carpeta seleccionada")
+
         self.boton_parar.pack(side="left", padx=10)
         self.boton_parar["state"] = "disabled"
 
@@ -480,16 +507,28 @@ class AnalizadorVideosApp:
         extras_frame.pack(fill="x", pady=5)
 
         # Botón para búsqueda avanzada
+        self.boton_mostrar_problemas = tk.Button(extras_frame, text="Mostrar problemáticos",
+                             command=self.mostrar_videos_problema,
+                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                             state="disabled")
+        self.boton_mostrar_problemas.pack(side="right", padx=5)
+
+        self.boton_mover_problemas = tk.Button(extras_frame, text="Mover problemáticos",
+                               command=self.mover_videos_problema,
+                               bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                               state="disabled")
+        self.boton_mover_problemas.pack(side="right", padx=5)
+
         self.boton_busqueda_avanzada = tk.Button(extras_frame, text="Búsqueda avanzada",
-                                                command=self.abrir_busqueda_avanzada,
-                                                bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+                            command=self.abrir_busqueda_avanzada,
+                            bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
         self.boton_busqueda_avanzada.pack(side="right", padx=5)
 
         # Boton para ver errores
         self.boton_print_errores = tk.Button(extras_frame, text="Ver Errores", borderwidth=0,
-                                             command=self.ver_lista_errores, state="disabled",
-                                             bg=COLOR_FRAME, fg=COLOR_BUTTON_TEXT,
-                                             activebackground=COLOR_PROGRESS)
+                             command=self.ver_lista_errores, state="disabled",
+                             bg=COLOR_FRAME, fg=COLOR_BUTTON_TEXT,
+                             activebackground=COLOR_PROGRESS)
         self.boton_print_errores.pack(side="right", padx=5)
 
         # Recuadro tipo Text para mostrar archivos
@@ -507,8 +546,9 @@ class AnalizadorVideosApp:
         style.configure("TNotebook.Tab", background=COLOR_BUTTON, foreground=COLOR_BUTTON_TEXT)
         # Configurar pestaña seleccionada con mejor contraste
         style.map("TNotebook.Tab",
-                  background=[("selected", COLOR_PROGRESS)],
-                  foreground=[("selected", "#FFFFFF")])
+              background=[("selected", COLOR_PROGRESS)],
+              foreground=[("selected", "#FFFFFF"),
+                      ("disabled", COLOR_TAB_DISABLED)])
         style.configure("TProgressbar", troughcolor=COLOR_BG,
                         background=COLOR_PROGRESS, bordercolor=COLOR_FRAME,
                         lightcolor=COLOR_PROGRESS, darkcolor=COLOR_PROGRESS)
@@ -519,6 +559,25 @@ class AnalizadorVideosApp:
     def mostrar_grafico(self):
         """ Llama a la función global mostrar_grafico con los resultados actuales """
         mostrar_grafico(self.resultados, self.carpeta)
+
+    def mostrar_pie_previsualizar(self):
+        """Muestra un gráfico de sectores basado en los recuentos de la previsualización"""
+        if not self.preview_counts:
+            messagebox.askokcancel("Sin datos", "Ejecuta 'Pre-visualizar' antes de graficar.")
+            return
+        etiquetas = []
+        valores = []
+        for ext, cantidad in sorted(self.preview_counts.items(), key=lambda item: item[0]):
+            etiquetas.append(ext if ext else "sin_ext")
+            valores.append(cantidad)
+        plt.style.use('fivethirtyeight')
+        _, ax = plt.subplots(figsize=(8, 6))
+        ax.pie(valores, labels=etiquetas, autopct="%1.1f%%", startangle=140,
+               colors=plt.get_cmap('tab20').colors, wedgeprops=dict(edgecolor='k'))
+        ax.set_title("Distribución de archivos por extensión (Pre-visualizar)")
+        ax.axis('equal')
+        plt.tight_layout()
+        plt.show()
 
     def abrir_review(self):
         """ Abre la carpeta 'review' dentro de la carpeta seleccionada """
@@ -561,11 +620,11 @@ class AnalizadorVideosApp:
         self.texto_archivos.config(state="normal")
         self.texto_archivos.delete(1.0, tk.END)
         if vacias:
-            self.texto_archivos.insert(tk.END, "Carpetas vacías:\n")
+            self.texto_archivos.insert('1.0', "Carpetas vacías:\n")
             for carpeta in vacias:
-                self.texto_archivos.insert(tk.END, carpeta + "\n")
+                self.texto_archivos.insert('1.0', carpeta + "\n")
         else:
-            self.texto_archivos.insert(tk.END, "No hay carpetas vacías.\n")
+            self.texto_archivos.insert('1.0', "No hay carpetas vacías.\n")
         self.texto_archivos.config(state="disabled")
 
     def ver_lista_errores(self):
@@ -597,6 +656,7 @@ class AnalizadorVideosApp:
             self.boton_review["state"] = "normal"
             self.boton_xcut["state"] = "normal"
             self.boton_avi["state"] = "normal"
+            self.boton_previsualizar["state"] = "disabled"
             # enable MOV tab controls as well
             try:
                 self.boton_mov["state"] = "normal"
@@ -610,8 +670,6 @@ class AnalizadorVideosApp:
             self.boton_abrir_errores["state"] = "normal"
             threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
                              daemon=True).start()
-        else:
-            messagebox.askokcancel("Advertencia", "Primero selecciona una carpeta.")
 
     def seleccionar_carpeta(self):
         """ Abre un diálogo para seleccionar una carpeta """
@@ -621,32 +679,95 @@ class AnalizadorVideosApp:
             self.carpeta_var.set(carpeta)
             self.boton["state"] = "normal"
             self.boton_analizar["state"] = "normal"
+            self.preview_counts = {}
+            self.videos_problema = []
+            self.boton_pie_previsualizar["state"] = "disabled"
             self.boton_grafico["state"] = "disabled"
             self.boton_review["state"] = "disabled"
             self.boton_xcut["state"] = "disabled"
             self.boton_avi["state"] = "normal"
+            self.boton_previsualizar["state"] = "normal"
+            self.boton_mostrar_problemas["state"] = "disabled"
+            self.boton_mover_problemas["state"] = "disabled"
             # enable MOV-specific buttons when a folder is selected
             try:
                 self.boton_mov["state"] = "normal"
-                self.boton_ver_vacias_mov["state"] = "normal"
             except AttributeError:
                 pass
             # enable MKV-specific buttons when a folder is selected
             try:
                 self.boton_mkv["state"] = "normal"
-                self.boton_ver_vacias_mkv["state"] = "normal"
             except AttributeError:
                 pass
-            self.boton_ver_vacias["state"] = "normal"
+
+            # Habilitar el botón global "Ver Vacías"
+            try:
+                self.boton_ver_vacias_general["state"] = "normal"
+            except AttributeError:
+                pass
+            self.boton.configure(bg=COLOR_BUTTON)
+            self._actualizar_tabs_formatos({})
         else:
             self.boton_analizar["state"] = "disabled"
             self.boton_avi["state"] = "disabled"
             self.boton_review["state"] = "disabled"
+            try:
+                self.boton_ver_vacias_general["state"] = "disabled"
+            except AttributeError:
+                pass
+            self.boton_previsualizar["state"] = "disabled"
+            self.boton_pie_previsualizar["state"] = "disabled"
+            self.boton.configure(bg=COLOR_BUTTON_HIGHLIGHT)
+            self._actualizar_tabs_formatos({})
+            self.boton_mostrar_problemas["state"] = "disabled"
+            self.boton_mover_problemas["state"] = "disabled"
+
+    def previsualizar_resumen(self):
+        """Muestra un resumen rápido del número de archivos
+        por extensión en la carpeta seleccionada"""
+        if not self.carpeta:
+            messagebox.askokcancel("Aviso", "Primero selecciona una carpeta.")
+            return
+        # Llevar el foco a la pestaña Resultados antes de mostrar el resumen
+        self.notebook.select(self.frame_resultados)
+        self.texto_archivos.focus_set()
+        counts = {}
+        for _, _, files in os.walk(self.carpeta):
+            for nombre in files:
+                ext = os.path.splitext(nombre)[1].lower() or 'sin_ext'
+                counts[ext] = counts.get(ext, 0) + 1
+        if not counts:
+            messagebox.askokcancel("Resultado", "No se encontraron archivos en la carpeta.")
+            return
+        self.preview_counts = counts
+        self.boton_pie_previsualizar["state"] = "normal"
+        resumen = ["Previsualización rápida:\n", "Número de archivos por extensión:\n"]
+        for ext, cnt in sorted(counts.items(), key=lambda item: item[0]):
+            resumen.append(f"- {cnt} archivos {ext}\n")
+        texto = "".join(resumen)
+        self.texto_archivos.config(state="normal")
+        self.texto_archivos.delete(1.0, tk.END)
+        self.texto_archivos.insert('1.0', texto)
+        self.texto_archivos.config(state="disabled")
+        self._actualizar_tabs_formatos(counts)
+
+    def _actualizar_tabs_formatos(self, counts):
+        """Activa o desactiva las pestañas AVI/MOV/MKV según los recuentos"""
+        formato_tabs = {
+            '.avi': self.frame_avi,
+            '.mov': self.frame_mov,
+            '.mkv': self.frame_mkv,
+        }
+        for ext, frame in formato_tabs.items():
+            has_files = counts.get(ext, 0) > 0
+            self.notebook.tab(frame, state="normal" if has_files else "disabled")
 
     def contar_avis_en_subcarpetas(self):
         """Cuenta todos los archivos .avi en la carpeta seleccionada y sus subcarpetas"""
         if not self.carpeta:
-            self.label_resultado.config(text="Primero selecciona una carpeta.")
+            mensaje = "Primero selecciona una carpeta."
+            self.label_resultado.config(text=mensaje)
+            self.label_conteo_avi.config(text=mensaje)
             return
         total_avis = 0
         total_roots = 0
@@ -659,8 +780,10 @@ class AnalizadorVideosApp:
                 total_roots += 1
                 carpetas_con_avis.append(root_dir)
             root_list.append(root_dir)
-        self.label_resultado.config(text=f"Total - {total_avis} - archivos .avi  en "
-                                        f"{total_roots} carpetas de ({len(root_list)})")
+        mensaje = (f"Total - {total_avis} - archivos .avi  en "
+               f"{total_roots} carpetas de ({len(root_list)})")
+        self.label_resultado.config(text=mensaje)
+        self.label_conteo_avi.config(text=mensaje)
         # Mostrar en el cuadro de texto
         # también escribir en la caja de la pestaña AVI si existe
         try:
@@ -680,11 +803,11 @@ class AnalizadorVideosApp:
         self.texto_archivos.config(state="normal")
         self.texto_archivos.delete(1.0, tk.END)
         if carpetas_con_avis:
-            self.texto_archivos.insert(tk.END, "Carpetas con archivos .avi:\n")
+            self.texto_archivos.insert('1.0', "Carpetas con archivos .avi:\n")
             for carpeta in carpetas_con_avis:
-                self.texto_archivos.insert(tk.END, carpeta + "\n")
+                self.texto_archivos.insert('1.0', carpeta + "\n")
         else:
-            self.texto_archivos.insert(tk.END, "No se encontraron carpetas con archivos .avi.\n")
+            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .avi.\n")
         self.texto_archivos.config(state="disabled")
 
     def mover_avis_a_carpeta(self):
@@ -760,7 +883,9 @@ class AnalizadorVideosApp:
     def contar_movs_en_subcarpetas(self):
         """Cuenta todos los archivos .mov en la carpeta seleccionada y sus subcarpetas"""
         if not self.carpeta:
-            self.label_resultado.config(text="Primero selecciona una carpeta.")
+            mensaje = "Primero selecciona una carpeta."
+            self.label_resultado.config(text=mensaje)
+            self.label_conteo_mov.config(text=mensaje)
             return
         total_movs = 0
         total_roots = 0
@@ -773,8 +898,10 @@ class AnalizadorVideosApp:
                 total_roots += 1
                 carpetas_con_movs.append(root_dir)
             root_list.append(root_dir)
-        self.label_resultado.config(text=f"Total - {total_movs} - archivos .mov  en "
-                                        f"{total_roots} carpetas de ({len(root_list)})")
+        mensaje = (f"Total - {total_movs} - archivos .mov  en "
+               f"{total_roots} carpetas de ({len(root_list)})")
+        self.label_resultado.config(text=mensaje)
+        self.label_conteo_mov.config(text=mensaje)
         try:
             self.texto_mov.config(state="normal")
             self.texto_mov.delete(1.0, tk.END)
@@ -791,11 +918,11 @@ class AnalizadorVideosApp:
         self.texto_archivos.config(state="normal")
         self.texto_archivos.delete(1.0, tk.END)
         if carpetas_con_movs:
-            self.texto_archivos.insert(tk.END, "Carpetas con archivos .mov:\n")
+            self.texto_archivos.insert('1.0', "Carpetas con archivos .mov:\n")
             for carpeta in carpetas_con_movs:
-                self.texto_archivos.insert(tk.END, carpeta + "\n")
+                self.texto_archivos.insert('1.0', carpeta + "\n")
         else:
-            self.texto_archivos.insert(tk.END, "No se encontraron carpetas con archivos .mov.\n")
+            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .mov.\n")
         self.texto_archivos.config(state="disabled")
 
     def mover_movs_a_carpeta(self):
@@ -935,7 +1062,9 @@ class AnalizadorVideosApp:
     def contar_mkvs_en_subcarpetas(self):
         """Cuenta todos los archivos .mkv en la carpeta seleccionada y sus subcarpetas"""
         if not self.carpeta:
-            self.label_resultado.config(text="Primero selecciona una carpeta.")
+            mensaje = "Primero selecciona una carpeta."
+            self.label_resultado.config(text=mensaje)
+            self.label_conteo_mkv.config(text=mensaje)
             return
         total = 0
         total_roots = 0
@@ -948,8 +1077,10 @@ class AnalizadorVideosApp:
                 total_roots += 1
                 carpetas.append(root_dir)
             root_list.append(root_dir)
-        self.label_resultado.config(text=f"Total - {total} - archivos .mkv"
-                                    f"  en {total_roots} carpetas de ({len(root_list)})")
+        mensaje = (f"Total - {total} - archivos .mkv"
+               f"  en {total_roots} carpetas de ({len(root_list)})")
+        self.label_resultado.config(text=mensaje)
+        self.label_conteo_mkv.config(text=mensaje)
         try:
             self.texto_mkv.config(state="normal")
             self.texto_mkv.delete(1.0, tk.END)
@@ -965,11 +1096,11 @@ class AnalizadorVideosApp:
         self.texto_archivos.config(state="normal")
         self.texto_archivos.delete(1.0, tk.END)
         if carpetas:
-            self.texto_archivos.insert(tk.END, "Carpetas con archivos .mkv:\n")
+            self.texto_archivos.insert('1.0', "Carpetas con archivos .mkv:\n")
             for c in carpetas:
-                self.texto_archivos.insert(tk.END, c + "\n")
+                self.texto_archivos.insert('1.0', c + "\n")
         else:
-            self.texto_archivos.insert(tk.END, "No se encontraron carpetas con archivos .mkv.\n")
+            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .mkv.\n")
         self.texto_archivos.config(state="disabled")
 
     def mover_mkvs_a_carpeta(self):
@@ -1134,12 +1265,12 @@ class AnalizadorVideosApp:
         _, ax = plt.subplots(figsize=(10, 6))
         # Hacemos la caja semitransparente (alpha) y usamos patch_artist para que se aplique
         box = ax.boxplot(ratios, vert=True, patch_artist=True, showfliers=True,
-						 boxprops=dict(facecolor='#9fb3c8', color='#2b5f78', alpha=0.35),
-						 medianprops=dict(color='red', linewidth=2),
-						 whiskerprops=dict(color='#2B6D8B'),
-						 capprops=dict(color='#2B6D8B'),
-						 flierprops=dict(marker='D', markerfacecolor='#E76F51', markersize=6,
-                       alpha=0.9, markeredgecolor='k'))
+                  boxprops=dict(facecolor='#9fb3c8', color='#2b5f78', alpha=0.35),
+                  medianprops=dict(color='red', linewidth=2),
+                  whiskerprops=dict(color='#2B6D8B'),
+                  capprops=dict(color='#2B6D8B'),
+                  flierprops=dict(marker='D', markerfacecolor='#E76F51', markersize=6,
+                           alpha=0.9, markeredgecolor='k'))
 
         # añadir puntos jitter por encima (zorder alto) para mayor visibilidad
         x = np.random.normal(1, 0.04, size=len(ratios))
@@ -1168,7 +1299,7 @@ class AnalizadorVideosApp:
         if outliers:
             for name, val in outliers:
                 ax.annotate(name, (1.02, val), xytext=(8, 0), textcoords='offset points',
-							va='center', fontsize=8, color='darkred')
+                            va='center', fontsize=8, color='darkred')
 
         plt.tight_layout()
         plt.show()
@@ -1235,11 +1366,11 @@ class AnalizadorVideosApp:
             self.texto_archivos.config(state="normal")
             self.texto_archivos.delete(1.0, tk.END)
             if encontrados:
-                self.texto_archivos.insert(tk.END, "Resultados de búsqueda avanzada:\n")
+                self.texto_archivos.insert('1.0', "Resultados de búsqueda avanzada:\n")
                 for nombre, dur, peso in encontrados:
-                    self.texto_archivos.insert(tk.END, f"{nombre}\t{dur:.2f} min\t{peso:.2f} MB\n")
+                    self.texto_archivos.insert('1.0', f"{nombre}\t{dur:.2f} min\t{peso:.2f} MB\n")
             else:
-                self.texto_archivos.insert(tk.END,
+                self.texto_archivos.insert('1.0',
                                            "No se encontraron archivos con esos criterios.\n")
             self.texto_archivos.config(state="disabled")
             ventana.destroy()
@@ -1260,6 +1391,56 @@ class AnalizadorVideosApp:
         except tk.TclError:
             porcentaje = 0
         print(f"Análisis abortado mediante el botón PARAR. Porcentaje analizado: {porcentaje}%")
+        self._detener_procesos_analisis(wait=False)
+
+    def _procesar_video(self, ruta):
+        """Carga el clip y devuelve duración/peso (MB/min)"""
+        with VideoFileClip(ruta) as clip:
+            duracion = clip.duration / 60
+            peso = os.path.getsize(ruta) / (1024 * 1024)
+        return duracion, peso
+
+    def _mover_archivo_a_errores(self, ruta, archivo):
+        """Mueve un archivo a su carpeta 'errores' y devuelve si tuvo éxito"""
+        errores_dir = os.path.join(os.path.dirname(ruta), "errores")
+        if not os.path.exists(errores_dir):
+            try:
+                os.makedirs(errores_dir)
+            except (OSError, shutil.Error) as exc:
+                print(f"No se pudo crear la carpeta 'errores': {exc}")
+                return False
+        destino = os.path.join(errores_dir, archivo)
+        max_intentos = 5
+        for intento in range(1, max_intentos + 1):
+            try:
+                shutil.move(ruta, destino)
+                return True
+            except (OSError, shutil.Error) as exc:
+                err_num = getattr(exc, "errno", None)
+                win_err = getattr(exc, "winerror", None)
+                if intento < max_intentos and (win_err == 32 or err_num == errno.EACCES):
+                    wait = 0.4 + intento * 0.1
+                    print(f"Intento {intento} de mover {archivo} bloqueado; esperando {wait:.1f}s")
+                    time.sleep(wait)
+                    continue
+                print(f"Error al mover {archivo} a 'errores': {exc}")
+                return False
+
+    def _detener_procesos_analisis(self, wait=False):
+        """Cancela y cierra el executor que analiza vídeos"""
+        if self._analisis_future and not self._analisis_future.done():
+            try:
+                self._analisis_future.cancel()
+            except Exception:
+                pass
+        if self._analysis_executor:
+            try:
+                self._analysis_executor.shutdown(wait=wait)
+            except Exception:
+                pass
+            finally:
+                self._analysis_executor = None
+        self._analisis_future = None
 
     def _analizar_videos_thread(self, carpeta):
         """ Función que se ejecuta en un hilo para analizar los vídeos en carpeta y subcarpetas """
@@ -1270,6 +1451,8 @@ class AnalizadorVideosApp:
         carpetas_archivos = []
         # Recorrer carpeta y subcarpetas
         for root_dir, _, files in os.walk(carpeta):
+            if os.path.basename(root_dir).lower() == "errores":
+                continue
             for f in files:
                 if f.lower().endswith(extensiones_video):
                     archivos.append(f)
@@ -1277,7 +1460,12 @@ class AnalizadorVideosApp:
                     carpetas_archivos.append(root_dir)
         total = len(rutas_archivos)
         resultados = []
+        # Contadores para movimientos realizados durante el análisis
+        moved_counts = {'optimizar': 0, 'review': 0, 'errores': 0}
         self.texto_archivos.delete(1.0, tk.END)
+        self.videos_problema.clear()
+        self._detener_procesos_analisis(wait=False)
+        self.root.after(0, self._actualizar_botones_problemas)
 
         def crear_barra():
             """ Crea la barra de progreso """
@@ -1287,6 +1475,7 @@ class AnalizadorVideosApp:
             self.label_porcentaje.config(text="0%")
             self.frame3.update_idletasks()
         self.root.after(0, crear_barra)
+        self._analysis_executor = ThreadPoolExecutor(max_workers=1)
 
         for idx, (
             archivo, ruta, carpeta_actual
@@ -1294,78 +1483,97 @@ class AnalizadorVideosApp:
             if self._parar_analisis:
                 break  # Sale del bucle si se pulsó "Parar"
             carpetita = os.path.basename(os.path.dirname(ruta))
-            lista_de_analizados.append(archivo)
             self.texto_archivos.config(state="normal")
-            self.texto_archivos.insert(tk.END, f"Analizando archivo: {len(lista_de_analizados)} "
+            self.texto_archivos.insert('1.0', f"Analizando archivo: {idx}"
                                        f"\n{carpetita} - {archivo}\n")
-            #self.texto_archivos.see(tk.END)
+            self.texto_archivos.config(state="disabled")
+            
+            if not self._analysis_executor:
+                self._analysis_executor = ThreadPoolExecutor(max_workers=1)
+            future = self._analysis_executor.submit(self._procesar_video, ruta)
+            self._analisis_future = future
+            skip_video = False
+            
             try:
-                clip = VideoFileClip(ruta)
-                duracion = clip.duration / 60  # minutos
-                peso = os.path.getsize(ruta) / (1024 * 1024)  # MB
+                duracion, peso = future.result(timeout=30)
                 if duracion > 0:
                     resultados.append((archivo, duracion, peso, ruta, carpeta_actual))
-                clip.close()
-                self.texto_archivos.delete(1.0, tk.END)
+            except TimeoutError:
+                self._registrar_video_problema(ruta, archivo, "Timeout >30s")
+                self.texto_archivos.config(state="normal")
+                self.texto_archivos.insert('1.0',
+                                           f"Timeout >30s en {archivo}, se registró como problemático.\n")
+                self.texto_archivos.config(state="disabled")
+                skip_video = True
+            except CancelledError:
+                # Cuando se cancela la tarea, continuar sin marcar como problema
+                self.texto_archivos.config(state="normal")
+                self.texto_archivos.insert('1.0',
+                                           f"Análisis cancelado para {archivo}.\n")
+                self.texto_archivos.config(state="disabled")
+                skip_video = True
             except (OSError, ValueError) as e:
-                # Si el archivo ya está dentro de una carpeta llamada "errores", no crear ni mover
                 parent_basename = os.path.basename(os.path.dirname(ruta)).lower()
                 err_msg = str(e)
-                # Mostrar/registrar el error en el Text (usar cadena)
+                self.texto_archivos.config(state="normal")
                 try:
-                    self.texto_archivos.insert(tk.END, err_msg + "\n")
+                    self.texto_archivos.insert('1.0', err_msg + "\n")
                 except tk.TclError:
-                    # Si no se puede insertar en el Text, seguir sin interrumpir
                     pass
-                # Registrar en la lista de errores
-                lista_de_errores.append(carpetita)
-                lista_de_errores.append(archivo)
-
+                self.texto_archivos.config(state="disabled")
+                self._registrar_video_problema(ruta, archivo, err_msg)
                 if parent_basename == "errores":
-                    # Ya está en la carpeta de errores -> no crear ni mover
                     print(f"Archivo ya en 'errores', no se mueve: {ruta}")
-                else:
-                    errores_dir = os.path.join(os.path.dirname(ruta), "errores")
-                    # Crear la carpeta de errores solo si no existe
-                    if not os.path.exists(errores_dir):
-                        try:
-                            os.makedirs(errores_dir)
-                        except (OSError, shutil.Error) as e_mkdir:
-                            print(f"No se pudo crear la carpeta 'errores': {e_mkdir}")
-                            # No intentar mover si no se puede crear la carpeta
-                            continue
-                    # Mover el archivo a la carpeta de errores
-                    origen_error = ruta
-                    destino_error = os.path.join(errores_dir, archivo)
-                    try:
-                        shutil.move(origen_error, destino_error)
-                    except (OSError, shutil.Error) as e2:
-                        print(f"Error al mover {archivo} a la carpeta de errores: {e2}")
+                skip_video = True
+            except Exception as e:
+                # Capturar cualquier otra excepción inesperada sin detener el análisis
+                exc_msg = f"Error inesperado: {str(e)}"
+                self.texto_archivos.config(state="normal")
+                try:
+                    self.texto_archivos.insert('1.0', exc_msg + "\n")
+                except tk.TclError:
+                    pass
+                self.texto_archivos.config(state="disabled")
+                self._registrar_video_problema(ruta, archivo, exc_msg)
+                skip_video = True
+                
             porcentaje = int((idx / total) * 100)
-            self.root.after(0, lambda val=idx, pct=porcentaje: self._actualizar_progreso(val, pct))
-            self.texto_archivos.config(state="disabled")
+            self.root.after(0, lambda val=idx,
+                            pct=porcentaje: self._actualizar_progreso(val, pct))
+            
+            if skip_video:
+                continue
             if idx % 5 == 0:
                 self.root.after(0, self.frame3.update_idletasks)
-        self.boton_parar["state"] = "disabled"
 
-        # --- Mover archivos que cumplen la condición a la carpeta "review"
-        # o "xcut" en su subcarpeta ---
+        self.boton_parar["state"] = "disabled"
+        self._detener_procesos_analisis(wait=True)
+        self.root.after(0, self._actualizar_botones_problemas)
+
+        # --- Mover archivos que cumplen la condición a la carpeta
+        # "review", "xcut" o "optimizar" ---
         for nombre, duracion, peso, ruta, carpeta_actual in resultados:
-            # Evita crear review/xcut dentro de review/xcut
+            # Evita crear subcarpetas dentro de sí mismas (review/xcut/optimizar)
             basename_actual = os.path.basename(carpeta_actual).lower()
-            if duracion > 15 and (peso / duracion) < 25:
-                if basename_actual != "xcut":
-                    xcut_dir = os.path.join(carpeta_actual, "xcut")
+            # calcular ratio MB/min de forma segura
+            ratio = (peso / duracion) if duracion else 0
+
+            # Prioridad: mover a 'optimizar' si la relación peso/duración es excesiva
+            if ratio > 100:
+                if basename_actual != "optimizar":
+                    optim_dir = os.path.join(carpeta_actual, "optimizar")
                 else:
-                    xcut_dir = carpeta_actual
-                if not os.path.exists(xcut_dir):
-                    os.makedirs(xcut_dir)
-                destino = os.path.join(xcut_dir, nombre)
+                    optim_dir = carpeta_actual
+                if not os.path.exists(optim_dir):
+                    os.makedirs(optim_dir)
+                destino = os.path.join(optim_dir, nombre)
                 try:
                     shutil.move(ruta, destino)
+                    moved_counts['optimizar'] += 1
                 except (OSError, shutil.Error) as e:
-                    print(f"No se pudo mover {nombre}: {e}")
-            elif duracion > 30 and (peso / duracion) < 80:
+                    print(f"No se pudo mover {nombre} a 'optimizar': {e}")
+
+            elif duracion > 20 and ratio < 50:
                 if basename_actual != "review":
                     review_dir = os.path.join(carpeta_actual, "review")
                 else:
@@ -1375,12 +1583,54 @@ class AnalizadorVideosApp:
                 destino = os.path.join(review_dir, nombre)
                 try:
                     shutil.move(ruta, destino)
+                    moved_counts['review'] += 1
                 except (OSError, shutil.Error) as e:
                     print(f"No se pudo mover {nombre}: {e}")
 
+        # Calcular estadísticas por extensión y preparar resumen
+        # Conteo total de archivos por extensión (a partir de la lista inicial `archivos`)
+        counts_by_ext = {}
+        for f in archivos:
+            ext = os.path.splitext(f)[1].lower() or 'sin_ext'
+            counts_by_ext[ext] = counts_by_ext.get(ext, 0) + 1
+
+        # Calcular peso medio por minuto por extensión usando los resultados válidos
+        peso_sum_by_ext = {}
+        dur_sum_by_ext = {}
+        for nombre, dur, peso, *_ in resultados:
+            ext = os.path.splitext(nombre)[1].lower() or 'sin_ext'
+            peso_sum_by_ext[ext] = peso_sum_by_ext.get(ext, 0.0) + peso
+            dur_sum_by_ext[ext] = dur_sum_by_ext.get(ext, 0.0) + dur
+
+        avg_by_ext = {}
+        for ext in counts_by_ext:
+            total_peso = peso_sum_by_ext.get(ext, 0.0)
+            total_dur = dur_sum_by_ext.get(ext, 0.0)
+            avg = (total_peso / total_dur) if total_dur > 0 else 0.0
+            avg_by_ext[ext] = avg
+
+        # Preparar texto del resumen
+        resumen_lines = []
+        resumen_lines.append("Resumen del análisis:\n")
+        resumen_lines.append("Número de archivos por extensión:\n")
+        for ext, cnt in sorted(counts_by_ext.items(), key=lambda x: x[0]):
+            resumen_lines.append(f"- {cnt} archivos {ext}\n")
+        resumen_lines.append("\nPeso medio por minuto por extensión:\n")
+        for ext, avg in sorted(avg_by_ext.items(), key=lambda x: x[0]):
+            resumen_lines.append(f"- {ext}: {avg:.2f} MB/min\n")
+        resumen_lines.append("\nArchivos movidos durante el análisis:\n")
+        for k in moved_counts:
+            resumen_lines.append(f"- {moved_counts[k]} archivos -> {k}\n")
+        if self.videos_problema:
+            resumen_lines.append(
+                f"\nSe detectaron {len(self.videos_problema)} vídeos problemáticos. Usa 'Mostrar problemáticos' para verlos y 'Mover problemáticos' para enviarlos a errores.\n")
+
+        resumen_text = "".join(resumen_lines)
+
+        # Preparado el resumen (se mostrará desde 'actualizar_interfaz')
+
         def destruir_barra():
             if self.progress is not None:
-                lista_de_analizados.clear()
                 self.progress.destroy()
 
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
@@ -1412,6 +1662,10 @@ class AnalizadorVideosApp:
             self.boton_grafico["state"] = "normal"
             self.boton_histograma["state"] = "normal"
             self.boton["state"] = "normal"
+            try:
+                self.boton_previsualizar["state"] = "normal"
+            except AttributeError:
+                pass
 
             # Habilitar/deshabilitar botón Boxplot según número de ratios válidos
             # Condición: necesitamos al menos 3 vídeos con duración > 0
@@ -1433,19 +1687,25 @@ class AnalizadorVideosApp:
                 self.boton_visual["state"] = "normal"
                 # Elimina tooltip si existe (crea uno vacío)
                 ToolTip(self.boton_visual, "")
-            # Mostrar solo archivos de más de 15 min y < 80 MB/min
-            self.texto_archivos.config(state="normal")
-            self.texto_archivos.delete(1.0, tk.END)
-            encontrados = False
+            # Mostrar el resumen final y la sección de destacados en la pestaña Resultados
+            destacados = []
+            destacados.append("\nArchivos destacados (duración >15 min y ratio <80 MB/min):\n")
+            encontrados_destacados = False
             for nombre, duracion, peso in self.resultados:
                 if duracion > 15 and (peso / duracion) < 80:
-                    self.texto_archivos.insert(tk.END,
-                                               f"- {nombre}\t \t{peso/duracion:.2f} MB/min\n")
-                    encontrados = True
-            if not encontrados:
-                self.texto_archivos.insert(tk.END,
-                                        "No hay archivos de más de 15 min menores de 80 MB/min.")
-            self.texto_archivos.config(state="disabled")
+                    destacados.append(f"- {nombre}\t \t{peso/duracion:.2f} MB/min\n")
+                    encontrados_destacados = True
+            if not encontrados_destacados:
+                destacados.append("No hay archivos de más de 15 min menores de 80 MB/min.\n")
+            destacados_text = "".join(destacados)
+            try:
+                self.texto_archivos.config(state="normal")
+                self.texto_archivos.delete(1.0, tk.END)
+                self.texto_archivos.insert('1.0', resumen_text)
+                self.texto_archivos.insert('1.0', destacados_text)
+                self.texto_archivos.config(state="disabled")
+            except tk.TclError:
+                pass
 
         self.root.after(0, actualizar_interfaz)
 
@@ -1456,6 +1716,76 @@ class AnalizadorVideosApp:
         except tk.TclError:
             pass  # La barra ya no existe, ignora el error
         self.label_porcentaje.config(text=f"{porcentaje}%")
+
+    def _registrar_video_problema(self, ruta, archivo, motivo):
+        """Registra un video como problemático para mostrar/mover luego"""
+        carpeta_actual = os.path.basename(os.path.dirname(ruta))
+        lista_de_errores.append(carpeta_actual)
+        lista_de_errores.append(archivo)
+        self.videos_problema.append({
+            'ruta': ruta,
+            'archivo': archivo,
+            'motivo': motivo,
+        })
+
+    def _actualizar_botones_problemas(self):
+        estado = "normal" if self.videos_problema else "disabled"
+        try:
+            self.boton_mostrar_problemas["state"] = estado
+            self.boton_mover_problemas["state"] = estado
+        except tk.TclError:
+            pass
+
+    def mostrar_videos_problema(self):
+        """Muestra en una ventana los vídeos problemáticos registrados"""
+        if not self.videos_problema:
+            messagebox.askokcancel("Videos problemáticos", "No hay vídeos problemáticos registrados.")
+            return
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Vídeos problemáticos")
+        ventana.configure(bg=COLOR_FRAME)
+        contenedor = ttk.Frame(ventana)
+        contenedor.pack(fill="both", expand=True)
+        texto = tk.Text(contenedor, height=20, width=100, bg=COLOR_BG, fg=COLOR_TEXT)
+        texto.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        texto.config(state="normal")
+        for idx, entrada in enumerate(self.videos_problema, 1):
+            texto.insert(tk.END, f"{idx}. {entrada['archivo']} - {entrada['motivo']}\n")
+            texto.insert(tk.END, f"   {entrada['ruta']}\n\n")
+        texto.config(state="disabled")
+        scroll = ttk.Scrollbar(contenedor, orient="vertical", command=texto.yview)
+        scroll.pack(side="right", fill="y")
+        texto.configure(yscrollcommand=scroll.set)
+
+    def mover_videos_problema(self):
+        """Mueve manualmente los vídeos problemáticos registrados a la carpeta 'errores'"""
+        if not self.videos_problema:
+            messagebox.askokcancel("Videos problemáticos", "No hay vídeos problemáticos registrados.")
+            return
+        pendientes = list(self.videos_problema)
+        movidos = 0
+        ya_en_errores = 0
+        for entrada in pendientes:
+            ruta = entrada['ruta']
+            archivo = entrada['archivo']
+            parent_basename = os.path.basename(os.path.dirname(ruta)).lower()
+            if parent_basename == "errores":
+                ya_en_errores += 1
+                continue
+            if self._mover_archivo_a_errores(ruta, archivo):
+                movidos += 1
+        self.videos_problema.clear()
+        self.root.after(0, self._actualizar_botones_problemas)
+        mensaje = f"Movidos {movidos} vídeos a errores." if movidos else "No se movió ningún vídeo."
+        if ya_en_errores:
+            mensaje += f" {ya_en_errores} ya estaban en 'errores'."
+        try:
+            self.texto_archivos.config(state="normal")
+            self.texto_archivos.insert('1.0', mensaje + "\n")
+            self.texto_archivos.config(state="disabled")
+        except tk.TclError:
+            pass
+        messagebox.showinfo("Videos problemáticos", mensaje)
 
     def buscar_avis_repetidos(self):
         """Busca archivos .avi que tengan el mismo nombre base pero con diferente extensión
