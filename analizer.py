@@ -5,9 +5,13 @@ import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import time
 import os
+import csv
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError, CancelledError
+import json
+from datetime import datetime
+#from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, CancelledError
 import numpy as np
 import matplotlib.pyplot as plt
 from moviepy import VideoFileClip
@@ -149,6 +153,121 @@ def mostrar_grafico(resultados, carpeta):
     plt.tight_layout()
     plt.show()
 
+class GestorHistorialMovimientos:
+    """Gestiona el historial de movimientos de archivos"""
+    def __init__(self, archivo_historial="movimientos_historial.json"):
+        self.archivo_historial = archivo_historial
+        self.historial = []
+        self.cargar_historial()
+
+    def cargar_historial(self):
+        """Carga el historial desde el archivo JSON"""
+        if os.path.exists(self.archivo_historial):
+            try:
+                with open(self.archivo_historial, 'r', encoding='utf-8') as f:
+                    self.historial = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                self.historial = []
+
+    def guardar_historial(self):
+        """Guarda el historial en el archivo JSON"""
+        try:
+            with open(self.archivo_historial, 'w', encoding='utf-8') as f:
+                json.dump(self.historial, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            print(f"Error guardando historial: {e}")
+
+    def registrar_movimiento(self, archivo, ruta_origen, ruta_destino, carpeta_destino, exito=True):
+        """Registra un movimiento de archivo"""
+        movimiento = {
+            'timestamp': datetime.now().isoformat(),
+            'archivo': archivo,
+            'ruta_origen': ruta_origen,
+            'ruta_destino': ruta_destino,
+            'carpeta_destino': carpeta_destino,
+            'exito': exito
+        }
+        self.historial.append(movimiento)
+        self.guardar_historial()
+
+    def deshacer_ultimo(self):
+        """Deshace el último movimiento"""
+        if not self.historial:
+            return False, "No hay movimientos para deshacer"
+
+        ultimo = self.historial[-1]
+        try:
+            if os.path.exists(ultimo['ruta_destino']):
+                shutil.move(ultimo['ruta_destino'], ultimo['ruta_origen'])
+                self.historial.pop()
+                self.guardar_historial()
+                return True, f"Desecho: {ultimo['archivo']} movido a {
+                    os.path.dirname(ultimo['ruta_origen'])}"
+            else:
+                return False, f"Archivo no encontrado: {ultimo['ruta_destino']}"
+        except (OSError, shutil.Error) as e:
+            return False, f"Error deshaciendo movimiento: {e}"
+
+    def deshacer_multiples(self, cantidad):
+        """Deshace múltiples movimientos"""
+        if cantidad > len(self.historial):
+            cantidad = len(self.historial)
+
+        deshechados = 0
+        errores = 0
+
+        for _ in range(cantidad):
+            exito, _ = self.deshacer_ultimo()
+            if exito:
+                deshechados += 1
+            else:
+                errores += 1
+
+        return deshechados, errores
+
+    def exportar_csv(self, archivo_salida="movimientos_historial.csv"):
+        """Exporta el historial a CSV"""
+        if not self.historial:
+            return False, "No hay movimientos para exportar"
+
+        try:
+            with open(archivo_salida, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['timestamp', 'archivo', 'ruta_origen',
+                                                       'ruta_destino', 'carpeta_destino', 'exito'])
+                writer.writeheader()
+                writer.writerows(self.historial)
+            return True, f"Historial exportado a {archivo_salida}"
+        except IOError as e:
+            return False, f"Error exportando CSV: {e}"
+
+    def exportar_json(self, archivo_salida="movimientos_historial_export.json"):
+        """Exporta el historial a JSON"""
+        if not self.historial:
+            return False, "No hay movimientos para exportar"
+
+        try:
+            with open(archivo_salida, 'w', encoding='utf-8') as f:
+                json.dump(self.historial, f, ensure_ascii=False, indent=2)
+            return True, f"Historial exportado a {archivo_salida}"
+        except IOError as e:
+            return False, f"Error exportando JSON: {e}"
+
+    def obtener_resumen(self):
+        """Obtiene un resumen del historial"""
+        if not self.historial:
+            return "No hay movimientos registrados"
+
+        total = len(self.historial)
+        exitosos = sum(1 for m in self.historial if m.get('exito', True))
+        fallidos = total - exitosos
+
+        return f"Total movimientos: {total} | Exitosos: {exitosos} | Fallidos: {fallidos}"
+
+    def limpiar_historial(self):
+        """Limpia todo el historial"""
+        self.historial = []
+        self.guardar_historial()
+
 class ToolTip:
     """Tooltip para widgets de Tkinter"""
     def __init__(self, widget, text):
@@ -158,7 +277,7 @@ class ToolTip:
         self.widget.bind("<Enter>", self.show_tip)
         self.widget.bind("<Leave>", self.hide_tip)
 
-    def show_tip(self, event=None):
+    def show_tip(self, _event=None):
         """Muestra el tooltip"""
         if self.tipwindow or not self.text:
             return
@@ -174,7 +293,7 @@ class ToolTip:
                          font=("tahoma", "9", "normal"))
         label.pack(ipadx=6, ipady=2)
 
-    def hide_tip(self, event=None):
+    def hide_tip(self, _event=None):
         """Oculta el tooltip"""
         tw = self.tipwindow
         self.tipwindow = None
@@ -193,6 +312,7 @@ class AnalizadorVideosApp:
         self._analisis_future = None
         self.carpeta = None  # Inicializar el atributo carpeta
         self._parar_analisis = False  # Control de parada
+        self.gestor_historial = GestorHistorialMovimientos()  # Gestor de historial
 
         self.root.configure(bg=COLOR_BG)
 
@@ -531,6 +651,45 @@ class AnalizadorVideosApp:
                              activebackground=COLOR_PROGRESS)
         self.boton_print_errores.pack(side="right", padx=5)
 
+        # Frame para botones de historial
+        historial_frame = tk.Frame(self.frame_resultados, bg=COLOR_FRAME)
+        historial_frame.pack(fill="x", pady=5)
+
+        # Botón para mostrar historial
+        self.boton_mostrar_historial = tk.Button(historial_frame, text="📋 Historial",
+                                                 command=self.mostrar_historial_movimientos,
+                                                 bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+        self.boton_mostrar_historial.pack(side="left", padx=5)
+        ToolTip(self.boton_mostrar_historial, "Muestra el historial de movimientos realizados")
+
+        # Botón para deshacer último movimiento
+        self.boton_deshacer = tk.Button(historial_frame, text="↩️ Deshacer",
+                                        command=self.deshacer_ultimo_movimiento,
+                                        bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+        self.boton_deshacer.pack(side="left", padx=5)
+        ToolTip(self.boton_deshacer, "Deshace el último movimiento de archivo")
+
+        # Botón para exportar historial a CSV
+        self.boton_exportar_csv = tk.Button(historial_frame, text="📊 CSV",
+                                            command=self.exportar_historial_csv,
+                                            bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+        self.boton_exportar_csv.pack(side="left", padx=5)
+        ToolTip(self.boton_exportar_csv, "Exporta el historial a formato CSV")
+
+        # Botón para exportar historial a JSON
+        self.boton_exportar_json = tk.Button(historial_frame, text="📄 JSON",
+                                             command=self.exportar_historial_json,
+                                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+        self.boton_exportar_json.pack(side="left", padx=5)
+        ToolTip(self.boton_exportar_json, "Exporta el historial a formato JSON")
+
+        # Botón para limpiar historial
+        self.boton_limpiar_historial = tk.Button(historial_frame, text="🗑️ Limpiar",
+                                                 command=self.limpiar_historial,
+                                                 bg=COLOR_BUTTON_STOP, fg=COLOR_BUTTON_TEXT)
+        self.boton_limpiar_historial.pack(side="left", padx=5)
+        ToolTip(self.boton_limpiar_historial, "Limpia todo el historial de movimientos")
+
         # Recuadro tipo Text para mostrar archivos
         self.texto_archivos = tk.Text(self.frame_resultados, height=25, width=120, fg=COLOR_TEXT,
                                       bg=COLOR_BG, insertbackground=COLOR_LABEL,
@@ -728,6 +887,36 @@ class AnalizadorVideosApp:
         if not self.carpeta:
             messagebox.askokcancel("Aviso", "Primero selecciona una carpeta.")
             return
+
+        # Buscar y mover archivos de la carpeta xcut a la raíz
+        xcut_dir = os.path.join(self.carpeta, "xcut")
+        if os.path.exists(xcut_dir) and os.path.isdir(xcut_dir):
+            archivos_movidos = 0
+            try:
+                # Listar todos los archivos en la carpeta xcut
+                for archivo in os.listdir(xcut_dir):
+                    ruta_archivo = os.path.join(xcut_dir, archivo)
+                    # Solo mover si es un archivo (no una carpeta)
+                    if os.path.isfile(ruta_archivo):
+                        destino = os.path.join(self.carpeta, archivo)
+                        try:
+                            shutil.move(ruta_archivo, destino)
+                            archivos_movidos += 1
+                        except (OSError, shutil.Error) as e:
+                            print(f"No se pudo mover {archivo} desde xcut: {e}")
+
+                # Intentar eliminar la carpeta xcut si está vacía
+                try:
+                    if os.path.exists(xcut_dir) and not os.listdir(xcut_dir):
+                        os.rmdir(xcut_dir)
+                except (OSError, shutil.Error) as e:
+                    print(f"No se pudo eliminar la carpeta xcut: {e}")
+
+                if archivos_movidos > 0:
+                    print(f"Se movieron {archivos_movidos} archivos desde xcut a la raíz")
+            except (OSError, shutil.Error) as e:
+                print(f"Error procesando la carpeta xcut: {e}")
+
         # Llevar el foco a la pestaña Resultados antes de mostrar el resumen
         self.notebook.select(self.frame_resultados)
         self.texto_archivos.focus_set()
@@ -1414,6 +1603,14 @@ class AnalizadorVideosApp:
         for intento in range(1, max_intentos + 1):
             try:
                 shutil.move(ruta, destino)
+                # Registrar el movimiento en el historial
+                self.gestor_historial.registrar_movimiento(
+                    archivo=archivo,
+                    ruta_origen=ruta,
+                    ruta_destino=destino,
+                    carpeta_destino="errores",
+                    exito=True
+                )
                 return True
             except (OSError, shutil.Error) as exc:
                 err_num = getattr(exc, "errno", None)
@@ -1424,6 +1621,14 @@ class AnalizadorVideosApp:
                     time.sleep(wait)
                     continue
                 print(f"Error al mover {archivo} a 'errores': {exc}")
+                # Registrar el movimiento fallido
+                self.gestor_historial.registrar_movimiento(
+                    archivo=archivo,
+                    ruta_origen=ruta,
+                    ruta_destino=destino,
+                    carpeta_destino="errores",
+                    exito=False
+                )
                 return False
 
     def _detener_procesos_analisis(self, wait=False):
@@ -1487,13 +1692,13 @@ class AnalizadorVideosApp:
             self.texto_archivos.insert('1.0', f"Analizando archivo: {idx}"
                                        f"\n{carpetita} - {archivo}\n")
             self.texto_archivos.config(state="disabled")
-            
+
             if not self._analysis_executor:
                 self._analysis_executor = ThreadPoolExecutor(max_workers=1)
             future = self._analysis_executor.submit(self._procesar_video, ruta)
             self._analisis_future = future
             skip_video = False
-            
+
             try:
                 duracion, peso = future.result(timeout=30)
                 if duracion > 0:
@@ -1502,7 +1707,7 @@ class AnalizadorVideosApp:
                 self._registrar_video_problema(ruta, archivo, "Timeout >30s")
                 self.texto_archivos.config(state="normal")
                 self.texto_archivos.insert('1.0',
-                                           f"Timeout >30s en {archivo}, se registró como problemático.\n")
+                                           f"Timeout >30s en {archivo}, registro problemático.\n")
                 self.texto_archivos.config(state="disabled")
                 skip_video = True
             except CancelledError:
@@ -1536,11 +1741,11 @@ class AnalizadorVideosApp:
                 self.texto_archivos.config(state="disabled")
                 self._registrar_video_problema(ruta, archivo, exc_msg)
                 skip_video = True
-                
+
             porcentaje = int((idx / total) * 100)
             self.root.after(0, lambda val=idx,
                             pct=porcentaje: self._actualizar_progreso(val, pct))
-            
+
             if skip_video:
                 continue
             if idx % 5 == 0:
@@ -1570,22 +1775,32 @@ class AnalizadorVideosApp:
                 try:
                     shutil.move(ruta, destino)
                     moved_counts['optimizar'] += 1
+                    self.gestor_historial.registrar_movimiento(nombre, ruta,
+                                                               destino, "optimizar", True)
                 except (OSError, shutil.Error) as e:
                     print(f"No se pudo mover {nombre} a 'optimizar': {e}")
+                    self.gestor_historial.registrar_movimiento(nombre, ruta, "", "optimizar", False)
 
             elif duracion > 20 and ratio < 50:
-                if basename_actual != "review":
-                    review_dir = os.path.join(carpeta_actual, "review")
-                else:
-                    review_dir = carpeta_actual
-                if not os.path.exists(review_dir):
-                    os.makedirs(review_dir)
-                destino = os.path.join(review_dir, nombre)
-                try:
-                    shutil.move(ruta, destino)
-                    moved_counts['review'] += 1
-                except (OSError, shutil.Error) as e:
-                    print(f"No se pudo mover {nombre}: {e}")
+                # Verificar que el archivo sea .mkv antes de mover a review
+                ext_archivo = os.path.splitext(nombre)[1].lower()
+                if ext_archivo == ".mkv":
+                    if basename_actual != "review":
+                        review_dir = os.path.join(carpeta_actual, "review")
+                    else:
+                        review_dir = carpeta_actual
+                    if not os.path.exists(review_dir):
+                        os.makedirs(review_dir)
+                    destino = os.path.join(review_dir, nombre)
+                    try:
+                        shutil.move(ruta, destino)
+                        moved_counts['review'] += 1
+                        self.gestor_historial.registrar_movimiento(nombre, ruta,
+                                                                   destino, "review", True)
+                    except (OSError, shutil.Error) as e:
+                        print(f"No se pudo mover {nombre}: {e}")
+                        self.gestor_historial.registrar_movimiento(nombre, ruta,
+                                                                   "", "review", False)
 
         # Calcular estadísticas por extensión y preparar resumen
         # Conteo total de archivos por extensión (a partir de la lista inicial `archivos`)
@@ -1623,7 +1838,9 @@ class AnalizadorVideosApp:
             resumen_lines.append(f"- {moved_counts[k]} archivos -> {k}\n")
         if self.videos_problema:
             resumen_lines.append(
-                f"\nSe detectaron {len(self.videos_problema)} vídeos problemáticos. Usa 'Mostrar problemáticos' para verlos y 'Mover problemáticos' para enviarlos a errores.\n")
+                f"\nSe detectaron {len(self.videos_problema)} vídeos problemáticos."
+                " Usa 'Mostrar problemáticos' para verlos y"
+                " 'Mover problemáticos' para enviarlos a errores.\n")
 
         resumen_text = "".join(resumen_lines)
 
@@ -1658,7 +1875,6 @@ class AnalizadorVideosApp:
                      f"   |   Tiempo por video: {tiempo_total/total_archivos:.2f} s"
                      f"   |   Errores: {int(len(lista_de_errores)/2)}")
             self.label_resultado.config(text=resultados_text)
-            print(len(resultados_text))
             self.boton_grafico["state"] = "normal"
             self.boton_histograma["state"] = "normal"
             self.boton["state"] = "normal"
@@ -1739,7 +1955,8 @@ class AnalizadorVideosApp:
     def mostrar_videos_problema(self):
         """Muestra en una ventana los vídeos problemáticos registrados"""
         if not self.videos_problema:
-            messagebox.askokcancel("Videos problemáticos", "No hay vídeos problemáticos registrados.")
+            messagebox.askokcancel("Videos problemáticos",
+                                   "No hay vídeos problemáticos registrados.")
             return
         ventana = tk.Toplevel(self.root)
         ventana.title("Vídeos problemáticos")
@@ -1760,7 +1977,8 @@ class AnalizadorVideosApp:
     def mover_videos_problema(self):
         """Mueve manualmente los vídeos problemáticos registrados a la carpeta 'errores'"""
         if not self.videos_problema:
-            messagebox.askokcancel("Videos problemáticos", "No hay vídeos problemáticos registrados.")
+            messagebox.askokcancel("Videos problemáticos",
+                                   "No hay vídeos problemáticos registrados.")
             return
         pendientes = list(self.videos_problema)
         movidos = 0
@@ -1786,6 +2004,119 @@ class AnalizadorVideosApp:
         except tk.TclError:
             pass
         messagebox.showinfo("Videos problemáticos", mensaje)
+
+    def mostrar_historial_movimientos(self):
+        """Muestra una ventana con el historial de movimientos"""
+        if not self.gestor_historial.historial:
+            messagebox.showinfo("Historial", "No hay movimientos registrados aún.")
+            return
+
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Historial de Movimientos")
+        ventana.geometry("900x500")
+        ventana.configure(bg=COLOR_BG)
+
+        # Frame superior con información
+        frame_info = tk.Frame(ventana, bg=COLOR_FRAME)
+        frame_info.pack(fill="x", padx=5, pady=5)
+
+        resumen = self.gestor_historial.obtener_resumen()
+        label_info = tk.Label(frame_info, text=resumen, bg=COLOR_FRAME,
+                              fg=COLOR_LABEL, font=("Arial", 10, "bold"))
+        label_info.pack(pady=5)
+
+        # Texto con scroll para mostrar el historial
+        frame_texto = ttk.Frame(ventana)
+        frame_texto.pack(fill="both", expand=True, padx=5, pady=5)
+
+        texto = tk.Text(frame_texto, height=20, width=100, bg=COLOR_BG, fg=COLOR_TEXT,
+                       insertbackground=COLOR_LABEL, state="normal", wrap="word")
+        texto.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(frame_texto, orient="vertical", command=texto.yview)
+        scroll.pack(side="right", fill="y")
+        texto.configure(yscrollcommand=scroll.set)
+        texto.config(font=("Consolas", 9))
+
+        # Llenar el texto con el historial
+        for movimiento in reversed(self.gestor_historial.historial):
+            timestamp = movimiento.get('timestamp', 'N/A')
+            archivo = movimiento.get('archivo', 'N/A')
+            carpeta_dest = movimiento.get('carpeta_destino', 'N/A')
+            exito = "✓" if movimiento.get('exito', True) else "✗"
+
+            linea = f"[{exito}] {timestamp} | {archivo} → {carpeta_dest}\n"
+            texto.insert(tk.END, linea)
+
+        texto.config(state="disabled")
+
+    def deshacer_ultimo_movimiento(self):
+        """Deshace el último movimiento registrado"""
+        exito, mensaje = self.gestor_historial.deshacer_ultimo()
+
+        if exito:
+            messagebox.showinfo("Deshacer", f"✓ {mensaje}")
+            print(f"Deshacer exitoso: {mensaje}")
+        else:
+            messagebox.showerror("Error", f"✗ {mensaje}")
+            print(f"Error al deshacer: {mensaje}")
+
+    def exportar_historial_csv(self):
+        """Exporta el historial a un archivo CSV"""
+        if not self.gestor_historial.historial:
+            messagebox.showwarning("Historial vacío", "No hay movimientos para exportar.")
+            return
+
+        archivo_salida = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"movimientos_historial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+
+        if archivo_salida:
+            exito, mensaje = self.gestor_historial.exportar_csv(archivo_salida)
+            if exito:
+                messagebox.showinfo("Exportación exitosa", mensaje)
+                print(f"CSV exportado: {archivo_salida}")
+            else:
+                messagebox.showerror("Error en exportación", mensaje)
+
+    def exportar_historial_json(self):
+        """Exporta el historial a un archivo JSON"""
+        if not self.gestor_historial.historial:
+            messagebox.showwarning("Historial vacío", "No hay movimientos para exportar.")
+            return
+
+        archivo_salida = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"movimientos_historial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+
+        if archivo_salida:
+            exito, mensaje = self.gestor_historial.exportar_json(archivo_salida)
+            if exito:
+                messagebox.showinfo("Exportación exitosa", mensaje)
+                print(f"JSON exportado: {archivo_salida}")
+            else:
+                messagebox.showerror("Error en exportación", mensaje)
+
+    def limpiar_historial(self):
+        """Limpia todo el historial con confirmación"""
+        if not self.gestor_historial.historial:
+            messagebox.showinfo("Historial vacío", "No hay movimientos para limpiar.")
+            return
+
+        confirmacion = messagebox.askyesno(
+            "Confirmar limpieza",
+            f"¿Deseas eliminar los {len(self.gestor_historial.historial)} movimientos"
+            " registrados?\nEsta acción no se puede deshacer."
+        )
+
+        if confirmacion:
+            self.gestor_historial.limpiar_historial()
+            messagebox.showinfo("Historial", "Historial limpiado correctamente.")
+            print("Historial limpiado")
 
     def buscar_avis_repetidos(self):
         """Busca archivos .avi que tengan el mismo nombre base pero con diferente extensión
