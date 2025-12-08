@@ -155,9 +155,10 @@ def mostrar_grafico(resultados, carpeta):
 
 class GestorHistorialMovimientos:
     """Gestiona el historial de movimientos de archivos"""
-    def __init__(self, archivo_historial="movimientos_historial.json"):
+    def __init__(self, archivo_historial="movimientos_historial.json", callback_actualizar=None):
         self.archivo_historial = archivo_historial
         self.historial = []
+        self.callback_actualizar = callback_actualizar
         self.cargar_historial()
 
     def cargar_historial(self):
@@ -176,7 +177,6 @@ class GestorHistorialMovimientos:
                 json.dump(self.historial, f, ensure_ascii=False, indent=2)
         except IOError as e:
             print(f"Error guardando historial: {e}")
-
     def registrar_movimiento(self, archivo, ruta_origen, ruta_destino, carpeta_destino, exito=True):
         """Registra un movimiento de archivo"""
         movimiento = {
@@ -189,6 +189,9 @@ class GestorHistorialMovimientos:
         }
         self.historial.append(movimiento)
         self.guardar_historial()
+        # Ejecutar callback si existe para actualizar UI
+        if self.callback_actualizar:
+            self.callback_actualizar()
 
     def deshacer_ultimo(self):
         """Deshace el último movimiento"""
@@ -312,7 +315,8 @@ class AnalizadorVideosApp:
         self._analisis_future = None
         self.carpeta = None  # Inicializar el atributo carpeta
         self._parar_analisis = False  # Control de parada
-        self.gestor_historial = GestorHistorialMovimientos()  # Gestor de historial
+        self.gestor_historial = GestorHistorialMovimientos(
+            callback_actualizar=self._habilitar_botones_historial)
 
         self.root.configure(bg=COLOR_BG)
 
@@ -524,34 +528,33 @@ class AnalizadorVideosApp:
         graficos_buttons_frame.pack(fill="x", pady=10)
 
         self.boton_grafico = tk.Button(graficos_buttons_frame, text="📈 Gráfico", relief="ridge",
-                                       command=self.mostrar_grafico, width=15,
+                                       command=self.mostrar_grafico, width=20,
                                        bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
                                        activebackground=COLOR_PROGRESS)
         self.boton_grafico.pack(side="left", padx=5)
         ToolTip(self.boton_grafico, "Muestra duración vs peso para los archivos analizados")
 
-        self.boton_histograma = tk.Button(graficos_buttons_frame, text="📊 Histograma", width=15,
-                                  command=self.mostrar_histograma_duraciones,
-                                  bg=COLOR_BUTTON, fg=COLOR_TEXT, relief="ridge",
-                                  activebackground=COLOR_PROGRESS, state="disabled")
+        self.boton_histograma = tk.Button(graficos_buttons_frame, text="📊 Histograma duración",
+                                          width=20, command=self.mostrar_histograma_duraciones,
+                                          bg=COLOR_BUTTON, fg=COLOR_TEXT, relief="ridge",
+                                          activebackground=COLOR_PROGRESS, state="disabled")
         self.boton_histograma.pack(side="left", padx=5)
 
-        self.boton_visual = tk.Button(graficos_buttons_frame, text="Visual", width=15,
+        self.boton_boxplot = tk.Button(graficos_buttons_frame, text="📊 Histograma ratio", width=20,
+                                       command=self.mostrar_boxplot_ratio,
+                                       bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
+                                       activebackground=COLOR_PROGRESS, relief="ridge")
+        self.boton_boxplot.pack(side="left", padx=5)
+
+        self.boton_visual = tk.Button(graficos_buttons_frame, text="Visual", width=20,
                                     command=lambda: mostrar_grafico_visual(self.resultados,
                                                                            self.carpeta),
                                     bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
                                     activebackground=COLOR_PROGRESS, relief="ridge")
         self.boton_visual.pack(side="left", padx=5)
 
-        # Nuevo botón: Boxplot de la relación Peso/Duración (MB/min)
-        self.boton_boxplot = tk.Button(graficos_buttons_frame, text="Boxplot ratio", width=15,
-                                       command=self.mostrar_boxplot_ratio,
-                                       bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
-                                       activebackground=COLOR_PROGRESS, relief="ridge")
-        self.boton_boxplot.pack(side="left", padx=5)
-
         self.boton_pie_previsualizar = tk.Button(graficos_buttons_frame,
-                             text="🥧 Pie Previsualizar", width=15,
+                             text="🥧 Pie Previsualizar", width=20,
                              command=self.mostrar_pie_previsualizar,
                              bg=COLOR_BUTTON, fg=COLOR_TEXT,
                              activebackground=COLOR_PROGRESS,
@@ -601,27 +604,6 @@ class AnalizadorVideosApp:
         carpetas_frame = tk.Frame(self.frame_resultados, bg=COLOR_FRAME)
         carpetas_frame.pack(fill="x", pady=5)
 
-        # Botón para abrir la carpeta review
-        self.boton_review = tk.Button(carpetas_frame, text="REVIEW", borderwidth=1,
-                                      command=self.abrir_review, width=10, relief="flat",
-                                      bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT, state="disabled",
-                                      activebackground=COLOR_PROGRESS)
-        self.boton_review.pack(side="left", padx=5)
-
-        # Botón para abrir la carpeta xcut
-        self.boton_xcut = tk.Button(carpetas_frame, text="XCUT", borderwidth=1,
-                                    command=self.abrir_xcut, width=10, relief="flat",
-                                    bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT, state="disabled",
-                                    activebackground=COLOR_PROGRESS)
-        self.boton_xcut.pack(side="left", padx=5)
-
-        # Botón para abrir la carpeta errores
-        self.boton_abrir_errores = tk.Button(carpetas_frame, text="ERRORES", borderwidth=1,
-                                             command=self.abrir_errores, width=10, relief="flat",
-                                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
-                                             activebackground=COLOR_PROGRESS, state="disabled")
-        self.boton_abrir_errores.pack(side="left", padx=5)
-
         # Frame para botones adicionales
         extras_frame = tk.Frame(self.frame_resultados, bg=COLOR_FRAME)
         extras_frame.pack(fill="x", pady=5)
@@ -658,35 +640,38 @@ class AnalizadorVideosApp:
         # Botón para mostrar historial
         self.boton_mostrar_historial = tk.Button(historial_frame, text="📋 Historial",
                                                  command=self.mostrar_historial_movimientos,
-                                                 bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+                                                 bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                                                 state="disabled")
         self.boton_mostrar_historial.pack(side="left", padx=5)
         ToolTip(self.boton_mostrar_historial, "Muestra el historial de movimientos realizados")
 
         # Botón para deshacer último movimiento
         self.boton_deshacer = tk.Button(historial_frame, text="↩️ Deshacer",
                                         command=self.deshacer_ultimo_movimiento,
-                                        bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+                                        bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT, state="disabled")
         self.boton_deshacer.pack(side="left", padx=5)
         ToolTip(self.boton_deshacer, "Deshace el último movimiento de archivo")
 
         # Botón para exportar historial a CSV
         self.boton_exportar_csv = tk.Button(historial_frame, text="📊 CSV",
                                             command=self.exportar_historial_csv,
-                                            bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+                                            bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT, state="disabled")
         self.boton_exportar_csv.pack(side="left", padx=5)
         ToolTip(self.boton_exportar_csv, "Exporta el historial a formato CSV")
 
         # Botón para exportar historial a JSON
         self.boton_exportar_json = tk.Button(historial_frame, text="📄 JSON",
                                              command=self.exportar_historial_json,
-                                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+                                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                                             state="disabled")
         self.boton_exportar_json.pack(side="left", padx=5)
         ToolTip(self.boton_exportar_json, "Exporta el historial a formato JSON")
 
         # Botón para limpiar historial
         self.boton_limpiar_historial = tk.Button(historial_frame, text="🗑️ Limpiar",
                                                  command=self.limpiar_historial,
-                                                 bg=COLOR_BUTTON_STOP, fg=COLOR_BUTTON_TEXT)
+                                                 bg=COLOR_BUTTON_STOP, fg=COLOR_BUTTON_TEXT,
+                                                 state="disabled")
         self.boton_limpiar_historial.pack(side="left", padx=5)
         ToolTip(self.boton_limpiar_historial, "Limpia todo el historial de movimientos")
 
@@ -714,7 +699,9 @@ class AnalizadorVideosApp:
         style.configure("TLabel", background=COLOR_FRAME, foreground=COLOR_LABEL)
         style.configure("TButton", background=COLOR_BUTTON, foreground=COLOR_BUTTON_TEXT)
 
-        # (La pestaña MKV ya se definió antes junto a MOV)
+        # Habilitar botones de historial si hay datos previos
+        self._habilitar_botones_historial()
+
     def mostrar_grafico(self):
         """ Llama a la función global mostrar_grafico con los resultados actuales """
         mostrar_grafico(self.resultados, self.carpeta)
@@ -737,33 +724,6 @@ class AnalizadorVideosApp:
         ax.axis('equal')
         plt.tight_layout()
         plt.show()
-
-    def abrir_review(self):
-        """ Abre la carpeta 'review' dentro de la carpeta seleccionada """
-        if self.carpeta:
-            review_dir = os.path.join(self.carpeta, "review")
-            if os.path.exists(review_dir):
-                os.startfile(review_dir)
-            else:
-                messagebox.askokcancel("Info", "La carpeta 'review' no existe aún.")
-
-    def abrir_xcut(self):
-        """ Abre la carpeta 'xcut' dentro de la carpeta seleccionada """
-        if self.carpeta:
-            xcut_dir = os.path.join(self.carpeta, "xcut")
-            if os.path.exists(xcut_dir):
-                os.startfile(xcut_dir)
-            else:
-                messagebox.askokcancel("Info", "La carpeta 'xcut' no existe aún.")
-
-    def abrir_errores(self):
-        """ Abre la carpeta 'errores' dentro de la carpeta seleccionada """
-        if self.carpeta:
-            errores_dir = os.path.join(self.carpeta, "errores")
-            if os.path.exists(errores_dir):
-                os.startfile(errores_dir)
-            else:
-                messagebox.askokcancel("Info", "La carpeta 'errores' no existe aún.")
 
     def ver_carpetas_vacias(self):
         """Muestra en el cuadro Text las carpetas y subcarpetas vacías 
@@ -812,8 +772,6 @@ class AnalizadorVideosApp:
             self.boton["state"] = "disabled"
             self.boton_grafico["state"] = "disabled"
             self.boton_histograma["state"] = "disabled"
-            self.boton_review["state"] = "normal"
-            self.boton_xcut["state"] = "normal"
             self.boton_avi["state"] = "normal"
             self.boton_previsualizar["state"] = "disabled"
             # enable MOV tab controls as well
@@ -826,7 +784,6 @@ class AnalizadorVideosApp:
             except AttributeError:
                 pass
             self.boton_print_errores["state"] = "normal"
-            self.boton_abrir_errores["state"] = "normal"
             threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
                              daemon=True).start()
 
@@ -842,8 +799,6 @@ class AnalizadorVideosApp:
             self.videos_problema = []
             self.boton_pie_previsualizar["state"] = "disabled"
             self.boton_grafico["state"] = "disabled"
-            self.boton_review["state"] = "disabled"
-            self.boton_xcut["state"] = "disabled"
             self.boton_avi["state"] = "normal"
             self.boton_previsualizar["state"] = "normal"
             self.boton_mostrar_problemas["state"] = "disabled"
@@ -869,7 +824,6 @@ class AnalizadorVideosApp:
         else:
             self.boton_analizar["state"] = "disabled"
             self.boton_avi["state"] = "disabled"
-            self.boton_review["state"] = "disabled"
             try:
                 self.boton_ver_vacias_general["state"] = "disabled"
             except AttributeError:
@@ -1422,21 +1376,26 @@ class AnalizadorVideosApp:
         plt.show()
 
     def mostrar_boxplot_ratio(self):
-        """Genera un boxplot de la relación Peso/Duración (MB/min)
-        con puntos y outliers anotados. La caja central es semitransparente
-        para que se vean todos los puntos debajo / encima."""
+        """Genera dos histogramas de la relación Peso/Duración (MB/min)
+        uno para archivos MKV y otro para todos los demás."""
         if not self.resultados:
             messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
-        # calcular ratios y mantener nombres para anotaciones
-        ratios = []
-        labels = []
+
+        # Separar ratios por formato (MKV vs otros)
+        ratios_mkv = []
+        ratios_otros = []
+
         for nombre, dur, peso in self.resultados:
             if dur and dur > 0:
                 ratio = peso / dur
-                ratios.append(ratio)
-                labels.append((nombre, ratio))
-        if not ratios:
+                ext = os.path.splitext(nombre)[1].lower()
+                if ext == '.mkv':
+                    ratios_mkv.append(ratio)
+                else:
+                    ratios_otros.append(ratio)
+
+        if not ratios_mkv and not ratios_otros:
             messagebox.askokcancel("Sin datos", "No hay ratios válidos (duración 0).")
             return
 
@@ -1450,46 +1409,76 @@ class AnalizadorVideosApp:
                     continue
                 break
 
-        # Boxplot con puntos jitter
-        _, ax = plt.subplots(figsize=(10, 6))
-        # Hacemos la caja semitransparente (alpha) y usamos patch_artist para que se aplique
-        box = ax.boxplot(ratios, vert=True, patch_artist=True, showfliers=True,
-                  boxprops=dict(facecolor='#9fb3c8', color='#2b5f78', alpha=0.35),
-                  medianprops=dict(color='red', linewidth=2),
-                  whiskerprops=dict(color='#2B6D8B'),
-                  capprops=dict(color='#2B6D8B'),
-                  flierprops=dict(marker='D', markerfacecolor='#E76F51', markersize=6,
-                           alpha=0.9, markeredgecolor='k'))
+        # Crear dos subplots (uno arriba, otro abajo)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+        cm = plt.colormaps.get_cmap('viridis')
 
-        # añadir puntos jitter por encima (zorder alto) para mayor visibilidad
-        x = np.random.normal(1, 0.04, size=len(ratios))
-        ax.scatter(x, ratios, alpha=0.85, color='#264653', edgecolor='black', s=50, zorder=5)
+        # --- Subplot 1: Archivos MKV ---
+        if ratios_mkv:
+            n_bins = max(10, int(np.ceil(np.log2(len(ratios_mkv)) + 1)))
+            n, bins, patches = ax1.hist(ratios_mkv, bins=n_bins, color='#9fb3c8',
+                                         edgecolor='#2b5f78', alpha=0.75, linewidth=1.2)
 
-        ax.set_xticks([1])
-        ax.set_xticklabels(['Peso/Duración (MB/min)'])
-        ax.set_ylabel('MB por minuto')
-        ax.set_title('Boxplot: distribución de Peso/Duración')
+            # Colorear los bins en degradado
+            bin_centers = 0.5 * (bins[:-1] + bins[1:])
+            col = bin_centers - min(bin_centers)
+            if max(col) > 0:
+                col /= max(col)
+            for c, p in zip(col, patches):
+                plt.setp(p, 'facecolor', cm(c))
 
-        # Si el backend/versión no aplica alpha desde boxprops, aseguramos set_alpha en los patches
-        try:
-            for patch in box.get('boxes', []):
-                patch.set_alpha(0.35)
-        except (AttributeError, TypeError) as e:
-            # No interrumpir si algo falla al ajustar patches; registrar para depuración
-            print(f"Ignoring patch alpha set error: {e}")
+            # Líneas de referencia
+            media_mkv = np.mean(ratios_mkv)
+            mediana_mkv = np.median(ratios_mkv)
+            ax1.axvline(media_mkv, color='red', linestyle='--', linewidth=2,
+                       label=f'Media: {media_mkv:.2f} MB/min')
+            ax1.axvline(mediana_mkv, color='green', linestyle='--', linewidth=2,
+                       label=f'Mediana: {mediana_mkv:.2f} MB/min')
 
-        # detectar outliers por IQR y anotarlos
-        q1 = np.percentile(ratios, 25)
-        q3 = np.percentile(ratios, 75)
-        iqr = q3 - q1
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        outliers = [(n, r) for n, r in labels if r < lower or r > upper]
-        if outliers:
-            for name, val in outliers:
-                ax.annotate(name, (1.02, val), xytext=(8, 0), textcoords='offset points',
-                            va='center', fontsize=8, color='darkred')
+            ax1.set_xlabel('Ratio (MB/min)', fontsize=11)
+            ax1.set_ylabel('Frecuencia', fontsize=11)
+            ax1.set_title(f'Archivos MKV (n={len(ratios_mkv)})', fontsize=12, fontweight='bold')
+            ax1.legend(loc='upper right')
+            ax1.grid(True, alpha=0.3)
+        else:
+            ax1.text(0.5, 0.5, 'Sin datos MKV', ha='center', va='center',
+                    transform=ax1.transAxes, fontsize=12, color='gray')
+            ax1.set_title('Archivos MKV (n=0)', fontsize=12, fontweight='bold')
 
+        # --- Subplot 2: Otros formatos ---
+        if ratios_otros:
+            n_bins = max(10, int(np.ceil(np.log2(len(ratios_otros)) + 1)))
+            n, bins, patches = ax2.hist(ratios_otros, bins=n_bins, color='#9fb3c8',
+                                         edgecolor='#2b5f78', alpha=0.75, linewidth=1.2)
+
+            # Colorear los bins en degradado
+            bin_centers = 0.5 * (bins[:-1] + bins[1:])
+            col = bin_centers - min(bin_centers)
+            if max(col) > 0:
+                col /= max(col)
+            for c, p in zip(col, patches):
+                plt.setp(p, 'facecolor', cm(c))
+
+            # Líneas de referencia
+            media_otros = np.mean(ratios_otros)
+            mediana_otros = np.median(ratios_otros)
+            ax2.axvline(media_otros, color='red', linestyle='--', linewidth=2,
+                       label=f'Media: {media_otros:.2f} MB/min')
+            ax2.axvline(mediana_otros, color='green', linestyle='--', linewidth=2,
+                       label=f'Mediana: {mediana_otros:.2f} MB/min')
+
+            ax2.set_xlabel('Ratio (MB/min)', fontsize=11)
+            ax2.set_ylabel('Frecuencia', fontsize=11)
+            ax2.set_title(f'Otros formatos (n={len(ratios_otros)})', fontsize=12, fontweight='bold')
+            ax2.legend(loc='upper right')
+            ax2.grid(True, alpha=0.3)
+        else:
+            ax2.text(0.5, 0.5, 'Sin datos', ha='center', va='center',
+                    transform=ax2.transAxes, fontsize=12, color='gray')
+            ax2.set_title('Otros formatos (n=0)', fontsize=12, fontweight='bold')
+
+        fig.suptitle('Histograma: distribución de Peso/Duración (MB/min)', 
+                     fontsize=13, fontweight='bold', y=1.02)
         plt.tight_layout()
         plt.show()
 
@@ -1826,7 +1815,7 @@ class AnalizadorVideosApp:
 
         # Preparar texto del resumen
         resumen_lines = []
-        resumen_lines.append("Resumen del análisis:\n")
+        resumen_lines.append("\nResumen del análisis:\n")
         resumen_lines.append("Número de archivos por extensión:\n")
         for ext, cnt in sorted(counts_by_ext.items(), key=lambda x: x[0]):
             resumen_lines.append(f"- {cnt} archivos {ext}\n")
@@ -2057,6 +2046,7 @@ class AnalizadorVideosApp:
         if exito:
             messagebox.showinfo("Deshacer", f"✓ {mensaje}")
             print(f"Deshacer exitoso: {mensaje}")
+            self._habilitar_botones_historial()
         else:
             messagebox.showerror("Error", f"✗ {mensaje}")
             print(f"Error al deshacer: {mensaje}")
@@ -2117,6 +2107,22 @@ class AnalizadorVideosApp:
             self.gestor_historial.limpiar_historial()
             messagebox.showinfo("Historial", "Historial limpiado correctamente.")
             print("Historial limpiado")
+            self._habilitar_botones_historial()
+
+    def _habilitar_botones_historial(self):
+        """Habilita los botones de historial si hay datos en el historial"""
+        if self.gestor_historial.historial:
+            self.boton_mostrar_historial["state"] = "normal"
+            self.boton_deshacer["state"] = "normal"
+            self.boton_exportar_csv["state"] = "normal"
+            self.boton_exportar_json["state"] = "normal"
+            self.boton_limpiar_historial["state"] = "normal"
+        else:
+            self.boton_mostrar_historial["state"] = "disabled"
+            self.boton_deshacer["state"] = "disabled"
+            self.boton_exportar_csv["state"] = "disabled"
+            self.boton_exportar_json["state"] = "disabled"
+            self.boton_limpiar_historial["state"] = "disabled"
 
     def buscar_avis_repetidos(self):
         """Busca archivos .avi que tengan el mismo nombre base pero con diferente extensión
