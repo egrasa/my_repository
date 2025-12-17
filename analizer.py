@@ -92,64 +92,140 @@ def calcular_duracion_media(resultados):
     return total_duracion / len(resultados)
 
 def mostrar_grafico(resultados, carpeta):
-    """ Muestra un gráfico de dispersión de duración vs tamaño de los vídeos """
+    """ Muestra un gráfico de dispersión mejorado de duración vs tamaño de los vídeos """
     if not resultados:
         messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
     duraciones = [dur for _, dur, _ in resultados]
     pesos = [peso for _, _, peso in resultados]
 
-    plt.style.use('grayscale')  # Estilo gris
-    _, ax = plt.subplots(figsize=(10, max(6, len(resultados) * 0.25)))
-    fig = plt.gcf()
-    fig.patch.set_facecolor("#e0e0e0")  # Fondo de la figura
-    ax.set_facecolor("#887f7f")         # Fondo del subplot
+    # Elegir estilo disponible
+    preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid', 'seaborn', 'ggplot', 'default']
+    for s in preferred_styles:
+        if s in plt.style.available:
+            try:
+                plt.style.use(s)
+            except (OSError, ValueError, ImportError):
+                continue
+            break
 
-    # Colores: verde si cumple condición de review, azul si no
-    colores = ['tab:green' if (dur > 30 and (peso/dur) < 80) else 'tab:blue'
-               for dur, peso in zip(duraciones, pesos)]
-    ax.scatter(duraciones, pesos, c=colores, s=60, edgecolor='k', alpha=0.6)
+    # Crear figura con mejor tamaño
+    fig, ax = plt.subplots(figsize=(12, 8))
+    fig.patch.set_facecolor('#f5f5f5')
+    ax.set_facecolor('#ffffff')
 
-    # Etiquetas solo para los que cumplen la condición
+    # Calcular ratios para colorear puntos según categoría
+    ratios = [(peso / dur if dur > 0 else 0) for dur, peso in zip(duraciones, pesos)]
+
+    # Crear categorías: verde=ideal, azul=normal, naranja=alto, rojo=muy alto
+    colores = []
+    tamanios = []
+    for dur, peso, ratio in zip(duraciones, pesos, ratios):
+        if dur > 20 and ratio < 50:
+            colores.append('#2ecc71')  # Verde: candidato a review
+            tamanios.append(120)
+        elif ratio > 100:
+            colores.append('#e74c3c')  # Rojo: necesita optimizar
+            tamanios.append(140)
+        elif ratio > 50:
+            colores.append('#f39c12')  # Naranja: moderado
+            tamanios.append(110)
+        else:
+            colores.append('#3498db')  # Azul: normal
+            tamanios.append(100)
+
+    # Scatter plot mejorado
+    scatter = ax.scatter(duraciones, pesos, c=colores, s=tamanios, 
+                        edgecolor='#2c3e50', alpha=0.7, linewidth=1.5)
+
+    # Anotaciones inteligentes: solo para valores destacados
     for i, (nombre, dur, peso) in enumerate(resultados):
-        if dur > 15 and (peso/dur) < 80:
-            ax.annotate(nombre, (dur, peso), fontsize=9, color='green', alpha=0.8)
-        elif dur > 15 and (peso/dur) > 200:
-            ax.annotate(nombre, (dur, peso), fontsize=9, color='blue', alpha=0.8)
+        ratio = ratios[i]
+        # Anotar solo si supera 200 MB/min y duración > 5 min
+        if ratio > 200 and dur > 5:
+            ax.annotate(nombre, (dur, peso), fontsize=8, 
+                       xytext=(5, 5), textcoords='offset points',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor=colores[i], alpha=0.6),
+                       fontweight='bold')
 
     # Línea de tendencia (sin extremos)
-    ratios = [(peso / dur if dur > 0 else 0, idx) for idx,
-              (dur, peso) in enumerate(zip(duraciones, pesos))]
-    ratios_ordenados = sorted(ratios, key=lambda x: x[0])
-    # Solo descartar extremos si hay más de 20 vídeos
-    if len(ratios) > 20:
-        indices_a_descartar = {ratios_ordenados[0][1],
-                               ratios_ordenados[1][1],
-                               ratios_ordenados[-1][1],
-                               ratios_ordenados[-2][1]}
-    else:
-        indices_a_descartar = set()
-    duraciones_filtradas = [dur for i, dur in enumerate(duraciones) if i not in indices_a_descartar]
-    pesos_filtrados = [peso for i, peso in enumerate(pesos) if i not in indices_a_descartar]
-    if len(duraciones_filtradas) > 1:
-        z = np.polyfit(duraciones_filtradas, pesos_filtrados, 1)
-        p = np.poly1d(z)
-        ax.plot(duraciones_filtradas, p(duraciones_filtradas),
-                "r--", label="Tendencia (sin extremos)")
+    if len(duraciones) > 2:
+        ratios_con_idx = [(ratio, idx) for idx, ratio in enumerate(ratios)]
+        ratios_ordenados = sorted(ratios_con_idx, key=lambda x: x[0])
 
-    # Línea de 80 MB/min
+        # Descartar extremos solo si hay suficientes datos
+        if len(ratios) > 20:
+            indices_a_descartar = {ratios_ordenados[0][1], ratios_ordenados[1][1],
+                                   ratios_ordenados[-1][1], ratios_ordenados[-2][1]}
+        else:
+            indices_a_descartar = set()
+
+        duraciones_filtradas = [dur for i,
+                                dur in enumerate(duraciones) if i not in indices_a_descartar]
+        pesos_filtrados = [peso for i,
+                           peso in enumerate(pesos) if i not in indices_a_descartar]
+
+        if len(duraciones_filtradas) > 1:
+            z = np.polyfit(duraciones_filtradas, pesos_filtrados, 1)
+            p = np.poly1d(z)
+            x_linea = np.linspace(min(duraciones_filtradas), max(duraciones_filtradas), 100)
+            ax.plot(x_linea, p(x_linea), color='#95a5a6', linestyle='--', 
+                   linewidth=2.5, label='Tendencia', alpha=0.8)
+
+    # Líneas de referencia mejoradas
     if duraciones:
         x_vals = [min(duraciones), max(duraciones)]
-        y_vals = [x * 80 for x in x_vals]
-        ax.plot(x_vals, y_vals, "g-.", label="80 MB/min")
-        # Línea de 150 MB/min (umbral de optimizar)
+        
+        # Línea de 50 MB/min (ideal)
+        y_vals_50 = [x * 50 for x in x_vals]
+        ax.plot(x_vals, y_vals_50, color='#2ecc71', linestyle='-.', 
+               linewidth=2, label='50 MB/min (Ideal)', alpha=0.7)
+        
+        # Línea de 80 MB/min (bueno)
+        y_vals_80 = [x * 80 for x in x_vals]
+        ax.plot(x_vals, y_vals_80, color='#3498db', linestyle='--', 
+               linewidth=2, label='80 MB/min (Bueno)', alpha=0.7)
+        
+        # Línea de 100 MB/min (umbral)
+        y_vals_100 = [x * 100 for x in x_vals]
+        ax.plot(x_vals, y_vals_100, color='#f39c12', linestyle=':', 
+               linewidth=2, label='100 MB/min (Alto)', alpha=0.7)
+        
+        # Línea de 150 MB/min (crítico)
         y_vals_150 = [x * 150 for x in x_vals]
-        ax.plot(x_vals, y_vals_150, "m--", label="150 MB/min")
+        ax.plot(x_vals, y_vals_150, color='#e74c3c', linestyle='-', 
+               linewidth=2.5, label='150 MB/min (Crítico)', alpha=0.8)
 
-    ax.set_xlabel("Duración (minutos)")
-    ax.set_ylabel("Tamaño (MB)")
-    ax.set_title(os.path.basename(carpeta) if carpeta else "Duración vs Tamaño de vídeos")
-    ax.legend()
+    # Etiquetas y título mejorados
+    ax.set_xlabel('Duración (minutos)', fontsize=12, fontweight='bold', color='#2c3e50')
+    ax.set_ylabel('Tamaño (MB)', fontsize=12, fontweight='bold', color='#2c3e50')
+    
+    title_text = os.path.basename(carpeta) if carpeta else "Análisis: Duración vs Tamaño"
+    ax.set_title(title_text, fontsize=14, fontweight='bold', 
+                color='#2c3e50', pad=20)
+    
+    # Grid mejorado
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7, color='#bdc3c7')
+    
+    # Leyenda mejorada
+    legend = ax.legend(loc='upper left', fontsize=10, framealpha=0.95, 
+                      edgecolor='#2c3e50', fancybox=True, shadow=True)
+    legend.get_frame().set_facecolor('#ecf0f1')
+    
+    # Ajustar límites con margen
+    if duraciones and pesos:
+        margin_x = (max(duraciones) - min(duraciones)) * 0.1
+        margin_y = (max(pesos) - min(pesos)) * 0.1
+        ax.set_xlim(max(0, min(duraciones) - margin_x), max(duraciones) + margin_x)
+        ax.set_ylim(max(0, min(pesos) - margin_y), max(pesos) + margin_y)
+    
+    # Mejorar apariencia general
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#2c3e50')
+    ax.spines['bottom'].set_color('#2c3e50')
+    ax.tick_params(colors='#2c3e50', labelsize=9)
+    
     plt.tight_layout()
     plt.show()
 
@@ -1363,17 +1439,96 @@ class AnalizadorVideosApp:
 
 
     def mostrar_histograma_duraciones(self):
-        """Muestra un histograma de la distribución de duraciones de los vídeos analizados."""
+        """Muestra un histograma mejorado de la distribución de duraciones de vídeos."""
         if not self.resultados:
             messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
+        
         duraciones = [dur for _, dur, _ in self.resultados]
-        plt.style.use('ggplot')
-        plt.figure(figsize=(10, 6))
-        plt.hist(duraciones, bins=20, color='#7289da', edgecolor='black', alpha=0.8)
-        plt.xlabel("Duración (minutos)")
-        plt.ylabel("Cantidad de vídeos")
-        plt.title("Distribución de duraciones de vídeos")
+        
+        # Elegir estilo disponible
+        preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid', 'seaborn', 'ggplot', 'default']
+        for s in preferred_styles:
+            if s in plt.style.available:
+                try:
+                    plt.style.use(s)
+                except (OSError, ValueError, ImportError):
+                    continue
+                break
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        fig.patch.set_facecolor('#f5f5f5')
+        ax.set_facecolor('#ffffff')
+
+        # Calcular número de bins óptimo
+        n_bins = max(15, int(np.ceil(np.log2(len(duraciones)) + 1)))
+        
+        # Crear histograma con colores degradados
+        n, bins, patches = ax.hist(duraciones, bins=n_bins, edgecolor='#2c3e50', 
+                                   alpha=0.8, linewidth=1.2)
+
+        # Colorear los bins con degradado según frecuencia
+        cm = plt.colormaps.get_cmap('RdYlGn_r')
+        bin_centers = 0.5 * (bins[:-1] + bins[1:])
+        col = bin_centers - min(bin_centers)
+        if max(col) > 0:
+            col /= max(col)
+        for c, p in zip(col, patches):
+            p.set_facecolor(cm(c))
+
+        # Calcular estadísticas
+        media = np.mean(duraciones)
+        mediana = np.median(duraciones)
+        q1 = np.percentile(duraciones, 25)
+        q3 = np.percentile(duraciones, 75)
+
+        # Líneas de referencia con estadísticas
+        ax.axvline(media, color='#e74c3c', linestyle='--', linewidth=2.5, 
+                  label=f'Media: {media:.1f} min', alpha=0.9)
+        ax.axvline(mediana, color='#3498db', linestyle='-.', linewidth=2.5, 
+                  label=f'Mediana: {mediana:.1f} min', alpha=0.9)
+        ax.axvline(q1, color='#95a5a6', linestyle=':', linewidth=1.5, 
+                  label=f'Q1: {q1:.1f} min', alpha=0.7)
+        ax.axvline(q3, color='#95a5a6', linestyle=':', linewidth=1.5, 
+                  label=f'Q3: {q3:.1f} min', alpha=0.7)
+
+        # Zona sombreada para rangos interpretativos
+        ax.axvspan(0, 5, alpha=0.1, color='#e74c3c', label='Muy corto (< 5 min)')
+        ax.axvspan(5, 20, alpha=0.1, color='#f39c12', label='Corto (5-20 min)')
+        ax.axvspan(20, 60, alpha=0.1, color='#2ecc71', label='Normal (20-60 min)')
+        if max(duraciones) > 60:
+            ax.axvspan(60, max(duraciones) + 5, alpha=0.1, color='#3498db', 
+                      label='Largo (> 60 min)')
+
+        # Etiquetas y título mejorados
+        ax.set_xlabel('Duración (minutos)', fontsize=12, fontweight='bold', color='#2c3e50')
+        ax.set_ylabel('Cantidad de vídeos', fontsize=12, fontweight='bold', color='#2c3e50')
+        ax.set_title('Distribución de duraciones de vídeos', fontsize=14, fontweight='bold', 
+                    color='#2c3e50', pad=20)
+
+        # Grid mejorado
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7, color='#bdc3c7')
+        ax.set_axisbelow(True)
+
+        # Leyenda mejorada
+        legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.95, 
+                          edgecolor='#2c3e50', fancybox=True, shadow=True, ncol=2)
+        legend.get_frame().set_facecolor('#ecf0f1')
+
+        # Estadísticas en texto
+        stats_text = f'Total: {len(duraciones)} vídeos\nDesv. Est: {np.std(duraciones):.1f} min\nRango: {min(duraciones):.1f} - {max(duraciones):.1f} min'
+        ax.text(0.5, 0.98, stats_text, transform=ax.transAxes,
+               fontsize=10, verticalalignment='top', horizontalalignment='center',
+               bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.9, edgecolor='#2c3e50', pad=0.8),
+               family='monospace', fontweight='bold', color='#2c3e50')
+
+        # Mejorar apariencia general
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#2c3e50')
+        ax.spines['bottom'].set_color('#2c3e50')
+        ax.tick_params(colors='#2c3e50', labelsize=10)
+
         plt.tight_layout()
         plt.show()
 
