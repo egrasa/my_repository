@@ -153,9 +153,9 @@ def mostrar_grafico(resultados, carpeta):
     plt.tight_layout()
     plt.show()
 
-class GestorHistorialMovimientos:
-    """Gestiona el historial de movimientos de archivos"""
-    def __init__(self, archivo_historial="movimientos_historial.json", callback_actualizar=None):
+class GestorHistorialAnalisis:
+    """Gestiona el historial de análisis realizados con estadísticas por formato"""
+    def __init__(self, archivo_historial="analisis_historial.json", callback_actualizar=None):
         self.archivo_historial = archivo_historial
         self.historial = []
         self.callback_actualizar = callback_actualizar
@@ -177,76 +177,81 @@ class GestorHistorialMovimientos:
                 json.dump(self.historial, f, ensure_ascii=False, indent=2)
         except IOError as e:
             print(f"Error guardando historial: {e}")
-    def registrar_movimiento(self, archivo, ruta_origen, ruta_destino, carpeta_destino, exito=True):
-        """Registra un movimiento de archivo"""
-        movimiento = {
+
+    def registrar_analisis(self, carpeta, counts_by_ext, avg_by_ext, total_archivos):
+        """Registra un análisis con estadísticas por formato"""
+        analisis = {
             'timestamp': datetime.now().isoformat(),
-            'archivo': archivo,
-            'ruta_origen': ruta_origen,
-            'ruta_destino': ruta_destino,
-            'carpeta_destino': carpeta_destino,
-            'exito': exito
+            'carpeta': carpeta,
+            'total_archivos': total_archivos,
+            'estadisticas_por_formato': {}
         }
-        self.historial.append(movimiento)
+
+        # Agregar estadísticas por cada formato encontrado
+        for ext in sorted(counts_by_ext.keys()):
+            analisis['estadisticas_por_formato'][ext] = {
+                'cantidad': counts_by_ext[ext],
+                'ratio_promedio_mb_min': round(avg_by_ext.get(ext, 0.0), 2)
+            }
+
+        self.historial.append(analisis)
         self.guardar_historial()
         # Ejecutar callback si existe para actualizar UI
         if self.callback_actualizar:
             self.callback_actualizar()
 
     def deshacer_ultimo(self):
-        """Deshace el último movimiento"""
+        """Deshace el último análisis registrado"""
         if not self.historial:
-            return False, "No hay movimientos para deshacer"
+            return False, "No hay análisis para deshacer"
 
         ultimo = self.historial[-1]
-        try:
-            if os.path.exists(ultimo['ruta_destino']):
-                shutil.move(ultimo['ruta_destino'], ultimo['ruta_origen'])
-                self.historial.pop()
-                self.guardar_historial()
-                return True, f"Desecho: {ultimo['archivo']} movido a {
-                    os.path.dirname(ultimo['ruta_origen'])}"
-            else:
-                return False, f"Archivo no encontrado: {ultimo['ruta_destino']}"
-        except (OSError, shutil.Error) as e:
-            return False, f"Error deshaciendo movimiento: {e}"
+        self.historial.pop()
+        self.guardar_historial()
+        return True, f"Análisis de {ultimo['carpeta']} eliminado del historial"
 
     def deshacer_multiples(self, cantidad):
-        """Deshace múltiples movimientos"""
+        """Deshace múltiples análisis"""
         if cantidad > len(self.historial):
             cantidad = len(self.historial)
 
         deshechados = 0
-        errores = 0
-
         for _ in range(cantidad):
             exito, _ = self.deshacer_ultimo()
             if exito:
                 deshechados += 1
-            else:
-                errores += 1
 
-        return deshechados, errores
+        return deshechados, 0
 
-    def exportar_csv(self, archivo_salida="movimientos_historial.csv"):
+    def exportar_csv(self, archivo_salida="analisis_historial.csv"):
         """Exporta el historial a CSV"""
         if not self.historial:
-            return False, "No hay movimientos para exportar"
+            return False, "No hay análisis para exportar"
 
         try:
             with open(archivo_salida, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['timestamp', 'archivo', 'ruta_origen',
-                                                       'ruta_destino', 'carpeta_destino', 'exito'])
-                writer.writeheader()
-                writer.writerows(self.historial)
+                writer = csv.writer(f)
+                writer.writerow(['Timestamp', 'Carpeta', 'Total Archivos', 'Formato',
+                                 'Cantidad', 'Ratio Promedio (MB/min)'])
+
+                for analisis in self.historial:
+                    for ext, stats in analisis['estadisticas_por_formato'].items():
+                        writer.writerow([
+                            analisis['timestamp'],
+                            analisis['carpeta'],
+                            analisis['total_archivos'],
+                            ext,
+                            stats['cantidad'],
+                            stats['ratio_promedio_mb_min']
+                        ])
             return True, f"Historial exportado a {archivo_salida}"
         except IOError as e:
             return False, f"Error exportando CSV: {e}"
 
-    def exportar_json(self, archivo_salida="movimientos_historial_export.json"):
+    def exportar_json(self, archivo_salida="analisis_historial_export.json"):
         """Exporta el historial a JSON"""
         if not self.historial:
-            return False, "No hay movimientos para exportar"
+            return False, "No hay análisis para exportar"
 
         try:
             with open(archivo_salida, 'w', encoding='utf-8') as f:
@@ -258,13 +263,10 @@ class GestorHistorialMovimientos:
     def obtener_resumen(self):
         """Obtiene un resumen del historial"""
         if not self.historial:
-            return "No hay movimientos registrados"
+            return "No hay análisis registrados"
 
         total = len(self.historial)
-        exitosos = sum(1 for m in self.historial if m.get('exito', True))
-        fallidos = total - exitosos
-
-        return f"Total movimientos: {total} | Exitosos: {exitosos} | Fallidos: {fallidos}"
+        return f"Total análisis registrados: {total}"
 
     def limpiar_historial(self):
         """Limpia todo el historial"""
@@ -315,7 +317,7 @@ class AnalizadorVideosApp:
         self._analisis_future = None
         self.carpeta = None  # Inicializar el atributo carpeta
         self._parar_analisis = False  # Control de parada
-        self.gestor_historial = GestorHistorialMovimientos(
+        self.gestor_historial = GestorHistorialAnalisis(
             callback_actualizar=self._habilitar_botones_historial)
 
         self.root.configure(bg=COLOR_BG)
@@ -1593,13 +1595,6 @@ class AnalizadorVideosApp:
             try:
                 shutil.move(ruta, destino)
                 # Registrar el movimiento en el historial
-                self.gestor_historial.registrar_movimiento(
-                    archivo=archivo,
-                    ruta_origen=ruta,
-                    ruta_destino=destino,
-                    carpeta_destino="errores",
-                    exito=True
-                )
                 return True
             except (OSError, shutil.Error) as exc:
                 err_num = getattr(exc, "errno", None)
@@ -1610,14 +1605,6 @@ class AnalizadorVideosApp:
                     time.sleep(wait)
                     continue
                 print(f"Error al mover {archivo} a 'errores': {exc}")
-                # Registrar el movimiento fallido
-                self.gestor_historial.registrar_movimiento(
-                    archivo=archivo,
-                    ruta_origen=ruta,
-                    ruta_destino=destino,
-                    carpeta_destino="errores",
-                    exito=False
-                )
                 return False
 
     def _detener_procesos_analisis(self, wait=False):
@@ -1764,11 +1751,8 @@ class AnalizadorVideosApp:
                 try:
                     shutil.move(ruta, destino)
                     moved_counts['optimizar'] += 1
-                    self.gestor_historial.registrar_movimiento(nombre, ruta,
-                                                               destino, "optimizar", True)
                 except (OSError, shutil.Error) as e:
                     print(f"No se pudo mover {nombre} a 'optimizar': {e}")
-                    self.gestor_historial.registrar_movimiento(nombre, ruta, "", "optimizar", False)
 
             elif duracion > 20 and ratio < 50:
                 # Verificar que el archivo sea .mkv antes de mover a review
@@ -1784,12 +1768,8 @@ class AnalizadorVideosApp:
                     try:
                         shutil.move(ruta, destino)
                         moved_counts['review'] += 1
-                        self.gestor_historial.registrar_movimiento(nombre, ruta,
-                                                                   destino, "review", True)
                     except (OSError, shutil.Error) as e:
                         print(f"No se pudo mover {nombre}: {e}")
-                        self.gestor_historial.registrar_movimiento(nombre, ruta,
-                                                                   "", "review", False)
 
         # Calcular estadísticas por extensión y preparar resumen
         # Conteo total de archivos por extensión (a partir de la lista inicial `archivos`)
@@ -1841,6 +1821,15 @@ class AnalizadorVideosApp:
 
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
         self.root.after(0, destruir_barra)
+        
+        # Registrar el análisis en el historial con estadísticas por formato
+        self.gestor_historial.registrar_analisis(
+            carpeta=self.carpeta,
+            counts_by_ext=counts_by_ext,
+            avg_by_ext=avg_by_ext,
+            total_archivos=len(self.resultados)
+        )
+        
         # Actualiza resultados para mostrar solo nombre, duracion, peso
         self.resultados = [(nombre, duracion, peso) for nombre, duracion, peso, _, _ in resultados]
 
@@ -1995,14 +1984,14 @@ class AnalizadorVideosApp:
         messagebox.showinfo("Videos problemáticos", mensaje)
 
     def mostrar_historial_movimientos(self):
-        """Muestra una ventana con el historial de movimientos"""
+        """Muestra una ventana con el historial de análisis realizados"""
         if not self.gestor_historial.historial:
-            messagebox.showinfo("Historial", "No hay movimientos registrados aún.")
+            messagebox.showinfo("Historial", "No hay análisis registrados aún.")
             return
 
         ventana = tk.Toplevel(self.root)
-        ventana.title("Historial de Movimientos")
-        ventana.geometry("900x500")
+        ventana.title("Historial de Análisis")
+        ventana.geometry("950x600")
         ventana.configure(bg=COLOR_BG)
 
         # Frame superior con información
@@ -2018,7 +2007,7 @@ class AnalizadorVideosApp:
         frame_texto = ttk.Frame(ventana)
         frame_texto.pack(fill="both", expand=True, padx=5, pady=5)
 
-        texto = tk.Text(frame_texto, height=20, width=100, bg=COLOR_BG, fg=COLOR_TEXT,
+        texto = tk.Text(frame_texto, height=25, width=110, bg=COLOR_BG, fg=COLOR_TEXT,
                        insertbackground=COLOR_LABEL, state="normal", wrap="word")
         texto.pack(side="left", fill="both", expand=True)
 
@@ -2027,20 +2016,34 @@ class AnalizadorVideosApp:
         texto.configure(yscrollcommand=scroll.set)
         texto.config(font=("Consolas", 9))
 
-        # Llenar el texto con el historial
-        for movimiento in reversed(self.gestor_historial.historial):
-            timestamp = movimiento.get('timestamp', 'N/A')
-            archivo = movimiento.get('archivo', 'N/A')
-            carpeta_dest = movimiento.get('carpeta_destino', 'N/A')
-            exito = "✓" if movimiento.get('exito', True) else "✗"
-
-            linea = f"[{exito}] {timestamp} | {archivo} → {carpeta_dest}\n"
-            texto.insert(tk.END, linea)
+        # Llenar el texto con el historial de análisis
+        for analisis in reversed(self.gestor_historial.historial):
+            timestamp = analisis.get('timestamp', 'N/A')
+            carpeta = analisis.get('carpeta', 'N/A')
+            total_archivos = analisis.get('total_archivos', 0)
+            
+            # Encabezado del análisis
+            linea_encabezado = f"\n{'='*100}\n"
+            linea_encabezado += f"📅 {timestamp} | 📁 {carpeta} | 📊 Total: {total_archivos} archivos\n"
+            linea_encabezado += f"{'='*100}\n"
+            texto.insert(tk.END, linea_encabezado)
+            
+            # Estadísticas por formato
+            stats = analisis.get('estadisticas_por_formato', {})
+            if stats:
+                texto.insert(tk.END, "Estadísticas por formato:\n")
+                for ext in sorted(stats.keys()):
+                    cant = stats[ext]['cantidad']
+                    ratio = stats[ext]['ratio_promedio_mb_min']
+                    linea = f"  {ext:10} │ Cantidad: {cant:4} │ Ratio promedio: {ratio:7.2f} MB/min\n"
+                    texto.insert(tk.END, linea)
+            else:
+                texto.insert(tk.END, "Sin estadísticas disponibles.\n")
 
         texto.config(state="disabled")
 
     def deshacer_ultimo_movimiento(self):
-        """Deshace el último movimiento registrado"""
+        """Deshace el último análisis registrado"""
         exito, mensaje = self.gestor_historial.deshacer_ultimo()
 
         if exito:
