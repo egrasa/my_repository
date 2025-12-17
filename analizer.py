@@ -91,6 +91,69 @@ def calcular_duracion_media(resultados):
     total_duracion = sum(duracion for _, duracion, _ in resultados)
     return total_duracion / len(resultados)
 
+def calcular_rating_optimizacion(resultados):
+    """
+    Calcula el rating de optimización (1-5 estrellas) basado en el porcentaje de archivos bien optimizados.
+    
+    Criterios:
+    - Archivos < 10 MB/min: Descartados (baja calidad)
+    - Archivos 10-100 MB/min: Bien optimizados
+    - Archivos > 100 MB/min: Mal optimizados
+    
+    Rating:
+    - 5 estrellas: % bien optimizados >= 90%
+    - 4 estrellas: % bien optimizados >= 70%
+    - 3 estrellas: % bien optimizados >= 50%
+    - 2 estrellas: % bien optimizados >= 20%
+    - 1 estrella: % bien optimizados < 20%
+    """
+    if not resultados:
+        return 0, 0, 0, 0, "Sin datos"
+    
+    bien_optimizados = 0
+    mal_optimizados = 0
+    
+    for nombre, duracion, peso, *_ in resultados:
+        if duracion <= 0:
+            continue
+        ratio = peso / duracion
+        
+        # Descartar archivos < 10 MB/min (baja calidad)
+        if ratio < 10:
+            continue
+        # Contar bien vs mal optimizados
+        elif ratio <= 100:
+            bien_optimizados += 1
+        else:
+            mal_optimizados += 1
+    
+    total_contable = bien_optimizados + mal_optimizados
+    
+    if total_contable == 0:
+        return 0, 0, 0, 0, "Sin archivos contables"
+    
+    pct_bien = (bien_optimizados / total_contable) * 100
+    pct_mal = (mal_optimizados / total_contable) * 100
+    
+    # Asignar estrellas
+    if pct_bien >= 90:
+        estrellas = 5
+        categoria = "Excelente"
+    elif pct_bien >= 70:
+        estrellas = 4
+        categoria = "Muy bueno"
+    elif pct_bien >= 50:
+        estrellas = 3
+        categoria = "Aceptable"
+    elif pct_bien >= 20:
+        estrellas = 2
+        categoria = "Bajo"
+    else:
+        estrellas = 1
+        categoria = "Crítico"
+    
+    return estrellas, pct_bien, bien_optimizados, mal_optimizados, categoria
+
 def mostrar_grafico(resultados, carpeta):
     """ Muestra un gráfico de dispersión mejorado de duración vs tamaño de los vídeos con subplot de distribución """
     if not resultados:
@@ -2104,7 +2167,20 @@ class AnalizadorVideosApp:
         # Preparar texto del resumen
         resumen_lines = []
         resumen_lines.append("\nResumen del análisis:\n")
-        resumen_lines.append("Número de archivos por extensión:\n")
+        resumen_lines.append("="*80 + "\n")
+        
+        # Calcular rating
+        estrellas_rating, pct_bien, bien_opt, mal_opt, categoria_rating = calcular_rating_optimizacion(resultados)
+        estrella_llena = "★"
+        estrella_vacia = "☆"
+        representacion_estrellas = estrella_llena * estrellas_rating + estrella_vacia * (5 - estrellas_rating)
+        
+        resumen_lines.append(f"\nRATING DE OPTIMIZACIÓN: {representacion_estrellas} - {categoria_rating}\n")
+        resumen_lines.append(f"Archivos bien optimizados (10-100 MB/min): {bien_opt} ({pct_bien:.1f}%)\n")
+        resumen_lines.append(f"Archivos mal optimizados (>100 MB/min): {mal_opt} ({100-pct_bien:.1f}%)\n")
+        resumen_lines.append("="*80 + "\n")
+        
+        resumen_lines.append("\nNúmero de archivos por extensión:\n")
         for ext, cnt in sorted(counts_by_ext.items(), key=lambda x: x[0]):
             resumen_lines.append(f"- {cnt} archivos {ext}\n")
         resumen_lines.append("\nPeso medio por minuto por extensión:\n")
@@ -2131,11 +2207,12 @@ class AnalizadorVideosApp:
         self.root.after(0, destruir_barra)
 
         # Registrar el análisis en el historial con estadísticas por formato
+        # Usar len(resultados) que es la cantidad de videos procesados correctamente
         self.gestor_historial.registrar_analisis(
             carpeta=self.carpeta,
             counts_by_ext=counts_by_ext,
             avg_by_ext=avg_by_ext,
-            total_archivos=len(self.resultados)
+            total_archivos=len(resultados)
         )
 
         # Actualiza resultados para mostrar solo nombre, duracion, peso
@@ -2153,12 +2230,21 @@ class AnalizadorVideosApp:
                 return
             peso_medio = calcular_peso_medio(self.resultados)
             duracion_media = calcular_duracion_media(self.resultados)
+            estrellas, pct_bien, bien_opt, mal_opt, categoria = calcular_rating_optimizacion(self.resultados)
+            
             total_archivos = len(self.resultados)
+            
+            # Crear representación visual de estrellas
+            estrella_llena = "★"
+            estrella_vacia = "☆"
+            representacion_estrellas = estrella_llena * estrellas + estrella_vacia * (5 - estrellas)
+            
             resultados_text =(f"Peso medio por minuto: {peso_medio:.2f} MB/min"
                      f"   |   Duración media: {duracion_media:.1f} min"
                      f"   |   Total archivos: {total_archivos}"
                      f"   |   Tiempo analizando: {tiempo_total:.1f} s"
                      f"   |   Tiempo por video: {tiempo_total/total_archivos:.2f} s"
+                     f"   |   Rating: {representacion_estrellas} ({categoria})"
                      f"   |   Errores: {int(len(lista_de_errores)/2)}")
             self.label_resultado.config(text=resultados_text)
             self.boton_grafico["state"] = "normal"
@@ -2189,22 +2275,12 @@ class AnalizadorVideosApp:
                 self.boton_visual["state"] = "normal"
                 # Elimina tooltip si existe (crea uno vacío)
                 ToolTip(self.boton_visual, "")
-            # Mostrar el resumen final y la sección de destacados en la pestaña Resultados
-            destacados = []
-            destacados.append("\nArchivos destacados (duración >15 min y ratio <80 MB/min):\n")
-            encontrados_destacados = False
-            for nombre, duracion, peso in self.resultados:
-                if duracion > 15 and (peso / duracion) < 80:
-                    destacados.append(f"- {nombre}\t \t{peso/duracion:.2f} MB/min\n")
-                    encontrados_destacados = True
-            if not encontrados_destacados:
-                destacados.append("No hay archivos de más de 15 min menores de 80 MB/min.\n")
-            destacados_text = "".join(destacados)
+            
+            # Mostrar solo el resumen en la pestaña Resultados
             try:
                 self.texto_archivos.config(state="normal")
                 self.texto_archivos.delete(1.0, tk.END)
                 self.texto_archivos.insert('1.0', resumen_text)
-                self.texto_archivos.insert('1.0', destacados_text)
                 self.texto_archivos.config(state="disabled")
             except tk.TclError:
                 pass
@@ -2293,6 +2369,9 @@ class AnalizadorVideosApp:
 
     def mostrar_historial_movimientos(self):
         """Muestra una ventana con el historial de análisis realizados"""
+        # Recargar el historial desde el archivo para asegurar que está actualizado
+        self.gestor_historial.cargar_historial()
+        
         if not self.gestor_historial.historial:
             messagebox.showinfo("Historial", "No hay análisis registrados aún.")
             return
