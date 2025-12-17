@@ -393,6 +393,7 @@ class AnalizadorVideosApp:
         self._analisis_future = None
         self.carpeta = None  # Inicializar el atributo carpeta
         self._parar_analisis = False  # Control de parada
+        self._previsualizacion_hecha = False  # Control para saber si ya se hizo previsualización
         self.gestor_historial = GestorHistorialAnalisis(
             callback_actualizar=self._habilitar_botones_historial)
 
@@ -419,19 +420,13 @@ class AnalizadorVideosApp:
         self.label_carpeta.pack(side="left", padx=(0, 5), fill="x", expand=True)
         self.label_carpeta.config(text="")  # Inicialmente vacío
 
-        # Botón para iniciar el análisis (se crea aquí, pero se mostrará en la pestaña Resultados)
-        self.boton_analizar = tk.Button(frame_dir, text="   ▶ Analizar  ",
-                                        command=self.analizar_carpeta,
-                                        bg=COLOR_BUTTON, fg=COLOR_LABEL, width=14,
+        # Botón unificado para pre-análisis y análisis
+        self.boton_analizar = tk.Button(frame_dir, text="  🔍 Pre-analizar  ",
+                                        command=self.analizar_o_previsualizar,
+                                        bg=COLOR_BUTTON, fg=COLOR_LABEL, width=16,
                                         activebackground=COLOR_PROGRESS, relief="ridge")
         self.boton_analizar["state"] = "disabled"
-        self.boton_previsualizar = tk.Button(frame_dir, text="  🔍 Pre-visualizar  ",
-                              command=self.previsualizar_resumen,
-                              bg=COLOR_BUTTON, fg=COLOR_LABEL, width=14,
-                              activebackground=COLOR_PROGRESS, relief="groove")
-        self.boton_previsualizar["state"] = "disabled"
-        ToolTip(self.boton_analizar, "Ejecuta el análisis completo sobre la carpeta seleccionada")
-        ToolTip(self.boton_previsualizar, "Resume rápidamente cuántos archivos hay por extensión")
+        ToolTip(self.boton_analizar, "Primero hace previsualización, luego análisis completo")
 
         # Sistema de pestañas
         self.notebook = ttk.Notebook(master)
@@ -654,7 +649,6 @@ class AnalizadorVideosApp:
         # Empaquetar el botón "Analizar" junto al control de progreso
         # para que esté en la pestaña Resultados
         self.boton_analizar.pack(side="left", padx=5)
-        self.boton_previsualizar.pack(side="left", padx=5)
 
         # Botón global para ver carpetas vacías (habilitado cuando se selecciona carpeta)
         self.boton_ver_vacias_general = tk.Button(self.frame3, text="🧹 Ver Vacías", width=12,
@@ -728,7 +722,7 @@ class AnalizadorVideosApp:
                                         command=self.deshacer_ultimo_movimiento,
                                         bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT, state="disabled")
         self.boton_deshacer.pack(side="left", padx=5)
-        ToolTip(self.boton_deshacer, "Deshace el último movimiento de archivo")
+        ToolTip(self.boton_deshacer, "Elimina el último análisis registrado del historial")
 
         # Botón para exportar historial a CSV
         self.boton_exportar_csv = tk.Button(historial_frame, text="📊 CSV",
@@ -830,47 +824,14 @@ class AnalizadorVideosApp:
         print(lista_de_errores)
         print(" ")
 
-    def analizar_carpeta(self):
-        """Inicia el análisis de la carpeta seleccionada"""
-        if self.carpeta:
-            self._parar_analisis = False  # Reset al iniciar
-            # -- seleccionar la pestaña "Resultados" automáticamente --
-            try:
-                self.notebook.select(self.frame_resultados)
-            except (tk.TclError, AttributeError) as e:
-                # En caso de problemas específicos con tkinter/notebook (por ejemplo
-                # si el widget no existe o hay un error de Tcl), registrar el error
-                # y continuar sin interrumpir. Evitamos capturar Exception de forma genérica.
-                try:
-                    print(f"Ignoring notebook selection error: {e}")
-                except OSError:
-                    # Proteger el print en entornos donde stdout pueda fallar
-                    pass
-            self.boton_parar["state"] = "normal"
-            self.boton["state"] = "disabled"
-            self.boton_grafico["state"] = "disabled"
-            self.boton_histograma["state"] = "disabled"
-            self.boton_avi["state"] = "normal"
-            self.boton_previsualizar["state"] = "disabled"
-            # enable MOV tab controls as well
-            try:
-                self.boton_mov["state"] = "normal"
-            except AttributeError:
-                pass
-            try:
-                self.boton_mkv["state"] = "normal"
-            except AttributeError:
-                pass
-            self.boton_print_errores["state"] = "normal"
-            threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
-                             daemon=True).start()
-
     def seleccionar_carpeta(self):
         """ Abre un diálogo para seleccionar una carpeta """
         carpeta = filedialog.askdirectory()
         if carpeta:
             self.carpeta = carpeta
             self.carpeta_var.set(carpeta)
+            self._previsualizacion_hecha = False  # Reset al seleccionar nueva carpeta
+            self.boton_analizar.config(text="  🔍 Pre-analizar  ")  # Restaurar texto inicial
             self.boton["state"] = "normal"
             self.boton_analizar["state"] = "normal"
             self.preview_counts = {}
@@ -878,7 +839,6 @@ class AnalizadorVideosApp:
             self.boton_pie_previsualizar["state"] = "disabled"
             self.boton_grafico["state"] = "disabled"
             self.boton_avi["state"] = "normal"
-            self.boton_previsualizar["state"] = "normal"
             self.boton_mostrar_problemas["state"] = "disabled"
             self.boton_mover_problemas["state"] = "disabled"
             # enable MOV-specific buttons when a folder is selected
@@ -906,16 +866,57 @@ class AnalizadorVideosApp:
                 self.boton_ver_vacias_general["state"] = "disabled"
             except AttributeError:
                 pass
-            self.boton_previsualizar["state"] = "disabled"
             self.boton_pie_previsualizar["state"] = "disabled"
             self.boton.configure(bg=COLOR_BUTTON_HIGHLIGHT)
             self._actualizar_tabs_formatos({})
             self.boton_mostrar_problemas["state"] = "disabled"
             self.boton_mover_problemas["state"] = "disabled"
 
+    def analizar_o_previsualizar(self):
+        """Ejecuta previsualización primero, luego análisis completo"""
+        if not self._previsualizacion_hecha:
+            # Primera pulsación: hacer previsualización
+            self.previsualizar_resumen()
+            self._previsualizacion_hecha = True
+            # Cambiar el nombre del botón
+            self.boton_analizar.config(text="   ▶ Analizar   ")
+            self.boton_analizar.config(relief="ridge")
+        else:
+            # Segunda pulsación: hacer análisis completo
+            self._previsualizacion_hecha = False  # Reset para próxima carpeta
+            self.analizar_carpeta_interno()
+
     def previsualizar_resumen(self):
-        """Muestra un resumen rápido del número de archivos
-        por extensión en la carpeta seleccionada"""
+        """Muestra un resumen rápido del número de archivos por extensión"""
+        if not self.carpeta:
+            messagebox.askokcancel("Aviso", "Primero selecciona una carpeta.")
+            return
+
+        # Llevar el foco a la pestaña Resultados antes de mostrar el resumen
+        self.notebook.select(self.frame_resultados)
+        self.texto_archivos.focus_set()
+        counts = {}
+        for _, _, files in os.walk(self.carpeta):
+            for nombre in files:
+                ext = os.path.splitext(nombre)[1].lower() or 'sin_ext'
+                counts[ext] = counts.get(ext, 0) + 1
+        if not counts:
+            messagebox.askokcancel("Resultado", "No se encontraron archivos en la carpeta.")
+            return
+        self.preview_counts = counts
+        self.boton_pie_previsualizar["state"] = "normal"
+        resumen = ["Previsualización rápida:\n", "Número de archivos por extensión:\n"]
+        for ext, cnt in sorted(counts.items(), key=lambda item: item[0]):
+            resumen.append(f"- {cnt} archivos {ext}\n")
+        texto = "".join(resumen)
+        self.texto_archivos.config(state="normal")
+        self.texto_archivos.delete(1.0, tk.END)
+        self.texto_archivos.insert('1.0', texto)
+        self.texto_archivos.config(state="disabled")
+        self._actualizar_tabs_formatos(counts)
+
+    def analizar_carpeta_interno(self):
+        """Inicia el análisis real de la carpeta seleccionada"""
         if not self.carpeta:
             messagebox.askokcancel("Aviso", "Primero selecciona una carpeta.")
             return
@@ -949,28 +950,33 @@ class AnalizadorVideosApp:
             except (OSError, shutil.Error) as e:
                 print(f"Error procesando la carpeta xcut: {e}")
 
-        # Llevar el foco a la pestaña Resultados antes de mostrar el resumen
-        self.notebook.select(self.frame_resultados)
-        self.texto_archivos.focus_set()
-        counts = {}
-        for _, _, files in os.walk(self.carpeta):
-            for nombre in files:
-                ext = os.path.splitext(nombre)[1].lower() or 'sin_ext'
-                counts[ext] = counts.get(ext, 0) + 1
-        if not counts:
-            messagebox.askokcancel("Resultado", "No se encontraron archivos en la carpeta.")
-            return
-        self.preview_counts = counts
-        self.boton_pie_previsualizar["state"] = "normal"
-        resumen = ["Previsualización rápida:\n", "Número de archivos por extensión:\n"]
-        for ext, cnt in sorted(counts.items(), key=lambda item: item[0]):
-            resumen.append(f"- {cnt} archivos {ext}\n")
-        texto = "".join(resumen)
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
-        self.texto_archivos.insert('1.0', texto)
-        self.texto_archivos.config(state="disabled")
-        self._actualizar_tabs_formatos(counts)
+        # Proceder con análisis normal usando threading
+        self._parar_analisis = False  # Reset al iniciar
+        # -- seleccionar la pestaña "Resultados" automáticamente --
+        try:
+            self.notebook.select(self.frame_resultados)
+        except (tk.TclError, AttributeError) as e:
+            try:
+                print(f"Ignoring notebook selection error: {e}")
+            except OSError:
+                pass
+        self.boton_parar["state"] = "normal"
+        self.boton["state"] = "disabled"
+        self.boton_grafico["state"] = "disabled"
+        self.boton_histograma["state"] = "disabled"
+        self.boton_avi["state"] = "normal"
+        # enable MOV tab controls as well
+        try:
+            self.boton_mov["state"] = "normal"
+        except AttributeError:
+            pass
+        try:
+            self.boton_mkv["state"] = "normal"
+        except AttributeError:
+            pass
+        self.boton_print_errores["state"] = "normal"
+        threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
+                         daemon=True).start()
 
     def _actualizar_tabs_formatos(self, counts):
         """Activa o desactiva las pestañas AVI/MOV/MKV según los recuentos"""
@@ -1516,7 +1522,9 @@ class AnalizadorVideosApp:
         legend.get_frame().set_facecolor('#ecf0f1')
 
         # Estadísticas en texto
-        stats_text = f'Total: {len(duraciones)} vídeos\nDesv. Est: {np.std(duraciones):.1f} min\nRango: {min(duraciones):.1f} - {max(duraciones):.1f} min'
+        muy_cortos = sum(1 for d in duraciones if d < 5)
+        muy_largos = sum(1 for d in duraciones if d > 60)
+        stats_text = f'Total: {len(duraciones)} vídeos\nDesv. Est: {np.std(duraciones):.1f} min\nRango: {min(duraciones):.1f} - {max(duraciones):.1f} min\nMuy cortos (<5 min): {muy_cortos}\nMuy largos (>60 min): {muy_largos}'
         ax.text(0.5, 0.98, stats_text, transform=ax.transAxes,
                fontsize=10, verticalalignment='top', horizontalalignment='center',
                bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.9, edgecolor='#2c3e50', pad=0.8),
@@ -1534,7 +1542,7 @@ class AnalizadorVideosApp:
 
     def mostrar_boxplot_ratio(self):
         """Genera dos histogramas de la relación Peso/Duración (MB/min)
-        uno para archivos MKV y otro para todos los demás."""
+        uno para archivos MKV y otro para todos los demás, con cajas de estadísticas."""
         if not self.resultados:
             messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
@@ -1567,7 +1575,7 @@ class AnalizadorVideosApp:
                 break
 
         # Crear dos subplots (uno arriba, otro abajo)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 11))
         cm = plt.colormaps.get_cmap('viridis')
 
         # --- Subplot 1: Archivos MKV ---
@@ -1587,20 +1595,32 @@ class AnalizadorVideosApp:
             # Líneas de referencia
             media_mkv = np.mean(ratios_mkv)
             mediana_mkv = np.median(ratios_mkv)
-            ax1.axvline(media_mkv, color='red', linestyle='--', linewidth=2,
-                       label=f'Media: {media_mkv:.2f} MB/min')
-            ax1.axvline(mediana_mkv, color='green', linestyle='--', linewidth=2,
-                       label=f'Mediana: {mediana_mkv:.2f} MB/min')
+            std_mkv = np.std(ratios_mkv)
+            min_mkv = min(ratios_mkv)
+            max_mkv = max(ratios_mkv)
+            
+            ax1.axvline(media_mkv, color='#e74c3c', linestyle='--', linewidth=2.5,
+                       label=f'Media: {media_mkv:.2f}', alpha=0.9)
+            ax1.axvline(mediana_mkv, color='#3498db', linestyle='-.', linewidth=2.5,
+                       label=f'Mediana: {mediana_mkv:.2f}', alpha=0.9)
 
-            ax1.set_xlabel('Ratio (MB/min)', fontsize=11)
-            ax1.set_ylabel('Frecuencia', fontsize=11)
-            ax1.set_title(f'Archivos MKV (n={len(ratios_mkv)})', fontsize=12, fontweight='bold')
-            ax1.legend(loc='upper right')
-            ax1.grid(True, alpha=0.3)
+            # Caja de estadísticas
+            stats_mkv = f'n = {len(ratios_mkv)}\nMedia: {media_mkv:.2f} MB/min\nMediana: {mediana_mkv:.2f} MB/min\nDesv. Est: {std_mkv:.2f}\nRango: {min_mkv:.2f} - {max_mkv:.2f}'
+            ax1.text(0.98, 0.97, stats_mkv, transform=ax1.transAxes,
+                    fontsize=10, verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95, 
+                             edgecolor='#2c3e50', pad=0.8, linewidth=1.5),
+                    family='monospace', fontweight='bold', color='#2c3e50')
+
+            ax1.set_xlabel('Ratio (MB/min)', fontsize=11, fontweight='bold')
+            ax1.set_ylabel('Frecuencia', fontsize=11, fontweight='bold')
+            ax1.set_title(f'Archivos MKV (n={len(ratios_mkv)})', fontsize=12, fontweight='bold', color='#2c3e50')
+            ax1.legend(loc='upper left', fontsize=10, framealpha=0.9, edgecolor='#2c3e50')
+            ax1.grid(True, alpha=0.3, linestyle='--')
         else:
             ax1.text(0.5, 0.5, 'Sin datos MKV', ha='center', va='center',
                     transform=ax1.transAxes, fontsize=12, color='gray')
-            ax1.set_title('Archivos MKV (n=0)', fontsize=12, fontweight='bold')
+            ax1.set_title('Archivos MKV (n=0)', fontsize=12, fontweight='bold', color='#7f8c8d')
 
         # --- Subplot 2: Otros formatos ---
         if ratios_otros:
@@ -1619,23 +1639,35 @@ class AnalizadorVideosApp:
             # Líneas de referencia
             media_otros = np.mean(ratios_otros)
             mediana_otros = np.median(ratios_otros)
-            ax2.axvline(media_otros, color='red', linestyle='--', linewidth=2,
-                       label=f'Media: {media_otros:.2f} MB/min')
-            ax2.axvline(mediana_otros, color='green', linestyle='--', linewidth=2,
-                       label=f'Mediana: {mediana_otros:.2f} MB/min')
+            std_otros = np.std(ratios_otros)
+            min_otros = min(ratios_otros)
+            max_otros = max(ratios_otros)
+            
+            ax2.axvline(media_otros, color='#e74c3c', linestyle='--', linewidth=2.5,
+                       label=f'Media: {media_otros:.2f}', alpha=0.9)
+            ax2.axvline(mediana_otros, color='#3498db', linestyle='-.', linewidth=2.5,
+                       label=f'Mediana: {mediana_otros:.2f}', alpha=0.9)
 
-            ax2.set_xlabel('Ratio (MB/min)', fontsize=11)
-            ax2.set_ylabel('Frecuencia', fontsize=11)
-            ax2.set_title(f'Otros formatos (n={len(ratios_otros)})', fontsize=12, fontweight='bold')
-            ax2.legend(loc='upper right')
-            ax2.grid(True, alpha=0.3)
+            # Caja de estadísticas
+            stats_otros = f'n = {len(ratios_otros)}\nMedia: {media_otros:.2f} MB/min\nMediana: {mediana_otros:.2f} MB/min\nDesv. Est: {std_otros:.2f}\nRango: {min_otros:.2f} - {max_otros:.2f}'
+            ax2.text(0.98, 0.97, stats_otros, transform=ax2.transAxes,
+                    fontsize=10, verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95,
+                             edgecolor='#2c3e50', pad=0.8, linewidth=1.5),
+                    family='monospace', fontweight='bold', color='#2c3e50')
+
+            ax2.set_xlabel('Ratio (MB/min)', fontsize=11, fontweight='bold')
+            ax2.set_ylabel('Frecuencia', fontsize=11, fontweight='bold')
+            ax2.set_title(f'Otros formatos (n={len(ratios_otros)})', fontsize=12, fontweight='bold', color='#2c3e50')
+            ax2.legend(loc='upper left', fontsize=10, framealpha=0.9, edgecolor='#2c3e50')
+            ax2.grid(True, alpha=0.3, linestyle='--')
         else:
             ax2.text(0.5, 0.5, 'Sin datos', ha='center', va='center',
                     transform=ax2.transAxes, fontsize=12, color='gray')
-            ax2.set_title('Otros formatos (n=0)', fontsize=12, fontweight='bold')
+            ax2.set_title('Otros formatos (n=0)', fontsize=12, fontweight='bold', color='#7f8c8d')
 
         fig.suptitle('Histograma: distribución de Peso/Duración (MB/min)', 
-                     fontsize=13, fontweight='bold', y=1.02)
+                     fontsize=14, fontweight='bold', y=0.995, color='#2c3e50')
         plt.tight_layout()
         plt.show()
 
@@ -2012,7 +2044,7 @@ class AnalizadorVideosApp:
             self.boton_histograma["state"] = "normal"
             self.boton["state"] = "normal"
             try:
-                self.boton_previsualizar["state"] = "normal"
+                self.boton_analizar["state"] = "normal"
             except AttributeError:
                 pass
 
@@ -2198,7 +2230,7 @@ class AnalizadorVideosApp:
         texto.config(state="disabled")
 
     def deshacer_ultimo_movimiento(self):
-        """Deshace el último análisis registrado"""
+        """Elimina el último análisis registrado del historial"""
         exito, mensaje = self.gestor_historial.deshacer_ultimo()
 
         if exito:
