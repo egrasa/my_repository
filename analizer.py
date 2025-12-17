@@ -92,7 +92,7 @@ def calcular_duracion_media(resultados):
     return total_duracion / len(resultados)
 
 def mostrar_grafico(resultados, carpeta):
-    """ Muestra un gráfico de dispersión mejorado de duración vs tamaño de los vídeos """
+    """ Muestra un gráfico de dispersión mejorado de duración vs tamaño de los vídeos con subplot de distribución """
     if not resultados:
         messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
@@ -109,10 +109,13 @@ def mostrar_grafico(resultados, carpeta):
                 continue
             break
 
-    # Crear figura con mejor tamaño
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # Crear figura con 2 subplots
+    fig = plt.figure(figsize=(16, 8))
     fig.patch.set_facecolor('#f5f5f5')
-    ax.set_facecolor('#ffffff')
+    
+    # Subplot principal (scatter)
+    ax1 = plt.subplot(1, 2, 1)
+    ax1.set_facecolor('#ffffff')
 
     # Calcular ratios para colorear puntos según categoría
     ratios = [(peso / dur if dur > 0 else 0) for dur, peso in zip(duraciones, pesos)]
@@ -135,7 +138,7 @@ def mostrar_grafico(resultados, carpeta):
             tamanios.append(100)
 
     # Scatter plot mejorado
-    scatter = ax.scatter(duraciones, pesos, c=colores, s=tamanios, 
+    ax1.scatter(duraciones, pesos, c=colores, s=tamanios,
                         edgecolor='#2c3e50', alpha=0.7, linewidth=1.5)
 
     # Anotaciones inteligentes: solo para valores destacados
@@ -143,7 +146,7 @@ def mostrar_grafico(resultados, carpeta):
         ratio = ratios[i]
         # Anotar solo si supera 200 MB/min y duración > 5 min
         if ratio > 200 and dur > 5:
-            ax.annotate(nombre, (dur, peso), fontsize=8, 
+            ax1.annotate(nombre, (dur, peso), fontsize=8,
                        xytext=(5, 5), textcoords='offset points',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor=colores[i], alpha=0.6),
                        fontweight='bold')
@@ -169,63 +172,126 @@ def mostrar_grafico(resultados, carpeta):
             z = np.polyfit(duraciones_filtradas, pesos_filtrados, 1)
             p = np.poly1d(z)
             x_linea = np.linspace(min(duraciones_filtradas), max(duraciones_filtradas), 100)
-            ax.plot(x_linea, p(x_linea), color='#95a5a6', linestyle='--', 
+            ax1.plot(x_linea, p(x_linea), color='#95a5a6', linestyle='--',
                    linewidth=2.5, label='Tendencia', alpha=0.8)
 
     # Líneas de referencia mejoradas
     if duraciones:
         x_vals = [min(duraciones), max(duraciones)]
-        
+
         # Línea de 50 MB/min (ideal)
         y_vals_50 = [x * 50 for x in x_vals]
-        ax.plot(x_vals, y_vals_50, color='#2ecc71', linestyle='-.', 
+        ax1.plot(x_vals, y_vals_50, color='#2ecc71', linestyle='-.',
                linewidth=2, label='50 MB/min (Ideal)', alpha=0.7)
-        
+
         # Línea de 80 MB/min (bueno)
         y_vals_80 = [x * 80 for x in x_vals]
-        ax.plot(x_vals, y_vals_80, color='#3498db', linestyle='--', 
+        ax1.plot(x_vals, y_vals_80, color='#3498db', linestyle='--',
                linewidth=2, label='80 MB/min (Bueno)', alpha=0.7)
-        
+
         # Línea de 100 MB/min (umbral)
         y_vals_100 = [x * 100 for x in x_vals]
-        ax.plot(x_vals, y_vals_100, color='#f39c12', linestyle=':', 
+        ax1.plot(x_vals, y_vals_100, color='#f39c12', linestyle=':',
                linewidth=2, label='100 MB/min (Alto)', alpha=0.7)
-        
+
         # Línea de 150 MB/min (crítico)
         y_vals_150 = [x * 150 for x in x_vals]
-        ax.plot(x_vals, y_vals_150, color='#e74c3c', linestyle='-', 
+        ax1.plot(x_vals, y_vals_150, color='#e74c3c', linestyle='-',
                linewidth=2.5, label='150 MB/min (Crítico)', alpha=0.8)
 
     # Etiquetas y título mejorados
-    ax.set_xlabel('Duración (minutos)', fontsize=12, fontweight='bold', color='#2c3e50')
-    ax.set_ylabel('Tamaño (MB)', fontsize=12, fontweight='bold', color='#2c3e50')
-    
+    ax1.set_xlabel('Duración (minutos)', fontsize=12, fontweight='bold', color='#2c3e50')
+    ax1.set_ylabel('Tamaño (MB)', fontsize=12, fontweight='bold', color='#2c3e50')
+
     title_text = os.path.basename(carpeta) if carpeta else "Análisis: Duración vs Tamaño"
-    ax.set_title(title_text, fontsize=14, fontweight='bold', 
+    ax1.set_title(title_text, fontsize=14, fontweight='bold',
                 color='#2c3e50', pad=20)
-    
+
     # Grid mejorado
-    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7, color='#bdc3c7')
-    
+    ax1.grid(True, alpha=0.3, linestyle='--', linewidth=0.7, color='#bdc3c7')
+
     # Leyenda mejorada
-    legend = ax.legend(loc='upper left', fontsize=10, framealpha=0.95, 
+    legend = ax1.legend(loc='upper left', fontsize=10, framealpha=0.95,
                       edgecolor='#2c3e50', fancybox=True, shadow=True)
     legend.get_frame().set_facecolor('#ecf0f1')
-    
+
     # Ajustar límites con margen
     if duraciones and pesos:
         margin_x = (max(duraciones) - min(duraciones)) * 0.1
         margin_y = (max(pesos) - min(pesos)) * 0.1
-        ax.set_xlim(max(0, min(duraciones) - margin_x), max(duraciones) + margin_x)
-        ax.set_ylim(max(0, min(pesos) - margin_y), max(pesos) + margin_y)
-    
+        ax1.set_xlim(max(0, min(duraciones) - margin_x), max(duraciones) + margin_x)
+        ax1.set_ylim(max(0, min(pesos) - margin_y), max(pesos) + margin_y)
+
     # Mejorar apariencia general
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#2c3e50')
-    ax.spines['bottom'].set_color('#2c3e50')
-    ax.tick_params(colors='#2c3e50', labelsize=9)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.spines['left'].set_color('#2c3e50')
+    ax1.spines['bottom'].set_color('#2c3e50')
+    ax1.tick_params(colors='#2c3e50', labelsize=9)
+
+    # ============ SUBPLOT 2: Distribución de rangos de ratio ============
+    ax2 = plt.subplot(1, 2, 2)
+    ax2.set_facecolor('#ffffff')
+
+    # Definir rangos de ratio y contar archivos en cada rango
+    rangos = [
+        (0, 30, 'Excelente (0-30)', '#27ae60'),
+        (30, 50, 'Ideal (30-50)', '#2ecc71'),
+        (50, 80, 'Bueno (50-80)', '#3498db'),
+        (80, 100, 'Moderado (80-100)', '#f39c12'),
+        (100, 150, 'Alto (100-150)', '#e67e22'),
+        (150, float('inf'), 'Crítico (>150)', '#e74c3c')
+    ]
+
+    datos_rangos = []
+    etiquetas_rangos = []
+    colores_rangos = []
     
+    for min_ratio, max_ratio, etiqueta, color in rangos:
+        cantidad = sum(1 for r in ratios if min_ratio <= r < max_ratio)
+        if cantidad > 0:  # Solo mostrar rangos con datos
+            datos_rangos.append(cantidad)
+            etiquetas_rangos.append(f'{etiqueta}\n({cantidad})')
+            colores_rangos.append(color)
+
+    # Gráfico de barras horizontal
+    if datos_rangos:
+        y_pos = np.arange(len(datos_rangos))
+        barras = ax2.barh(y_pos, datos_rangos, color=colores_rangos, edgecolor='#2c3e50', linewidth=1.5)
+        
+        # Agregar valores en las barras
+        for i, (barra, valor) in enumerate(zip(barras, datos_rangos)):
+            porcentaje = (valor / len(ratios)) * 100
+            ax2.text(barra.get_width() + 0.5, barra.get_y() + barra.get_height()/2,
+                    f'{valor} ({porcentaje:.1f}%)', 
+                    va='center', fontsize=10, fontweight='bold', color='#2c3e50')
+        
+        ax2.set_yticks(y_pos)
+        ax2.set_yticklabels(etiquetas_rangos, fontsize=10)
+        ax2.set_xlabel('Cantidad de archivos', fontsize=11, fontweight='bold', color='#2c3e50')
+        ax2.set_title('Distribución por rango de ratio (MB/min)', fontsize=12, fontweight='bold',
+                     color='#2c3e50', pad=15)
+        ax2.grid(True, alpha=0.3, axis='x', linestyle='--', linewidth=0.7, color='#bdc3c7')
+        ax2.set_axisbelow(True)
+        
+        # Mejorar apariencia
+        ax2.spines['top'].set_visible(False)
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['left'].set_color('#2c3e50')
+        ax2.spines['bottom'].set_color('#2c3e50')
+        ax2.tick_params(colors='#2c3e50', labelsize=9)
+        
+        # Agregar información resumida
+        info_text = (f'Total archivos: {len(ratios)}\n'
+                    f'Ratio promedio: {np.mean(ratios):.2f} MB/min\n'
+                    f'Ratio mediana: {np.median(ratios):.2f} MB/min\n'
+                    f'Rango: {min(ratios):.2f} - {max(ratios):.2f}')
+        ax2.text(0.98, 0.02, info_text, transform=ax2.transAxes,
+                fontsize=9, verticalalignment='bottom', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95,
+                         edgecolor='#2c3e50', pad=0.6),
+                family='monospace', fontweight='bold', color='#2c3e50')
+
     plt.tight_layout()
     plt.show()
 
@@ -243,6 +309,30 @@ class GestorHistorialAnalisis:
             try:
                 with open(self.archivo_historial, 'r', encoding='utf-8') as f:
                     self.historial = json.load(f)
+
+                necesita_guardar = False
+
+                # Migrar registros antiguos que no tengan 'veces'
+                for entrada in self.historial:
+                    if 'veces' not in entrada:
+                        entrada['veces'] = 1
+                        necesita_guardar = True
+
+                    # Reparar total_archivos que esté en 0
+                    if entrada.get('total_archivos', 0) == 0 and entrada.get(
+                        'estadisticas_por_formato'):
+                        total_calculado = sum(
+                            stats.get('cantidad', 0)
+                            for stats in entrada['estadisticas_por_formato'].values()
+                        )
+                        if total_calculado > 0:
+                            entrada['total_archivos'] = total_calculado
+                            necesita_guardar = True
+
+                # Si hay cambios, guardar el historial actualizado
+                if necesita_guardar:
+                    self.guardar_historial()
+
             except (json.JSONDecodeError, IOError):
                 self.historial = []
 
@@ -255,22 +345,46 @@ class GestorHistorialAnalisis:
             print(f"Error guardando historial: {e}")
 
     def registrar_analisis(self, carpeta, counts_by_ext, avg_by_ext, total_archivos):
-        """Registra un análisis con estadísticas por formato"""
-        analisis = {
+        """Registra un análisis con estadísticas por formato.
+        Si es idéntico al anterior de la misma carpeta, incrementa contador en lugar de duplicar."""
+        nuevo_analisis = {
             'timestamp': datetime.now().isoformat(),
             'carpeta': carpeta,
             'total_archivos': total_archivos,
-            'estadisticas_por_formato': {}
+            'estadisticas_por_formato': {},
+            'veces': 1  # Contador de repeticiones
         }
 
         # Agregar estadísticas por cada formato encontrado
         for ext in sorted(counts_by_ext.keys()):
-            analisis['estadisticas_por_formato'][ext] = {
+            nuevo_analisis['estadisticas_por_formato'][ext] = {
                 'cantidad': counts_by_ext[ext],
                 'ratio_promedio_mb_min': round(avg_by_ext.get(ext, 0.0), 2)
             }
 
-        self.historial.append(analisis)
+        # Buscar el último análisis de la MISMA carpeta (no solo el último del historial)
+        ultimo_misma_carpeta = None
+        for entrada in reversed(self.historial):
+            if entrada['carpeta'] == carpeta:
+                ultimo_misma_carpeta = entrada
+                break
+
+        # Comparar con el último análisis de la misma carpeta
+        if ultimo_misma_carpeta is not None:
+            # Verificar si tiene los mismos datos
+            if (ultimo_misma_carpeta['total_archivos'] == total_archivos and
+                ultimo_misma_carpeta['estadisticas_por_formato'] == nuevo_analisis['estadisticas_por_formato']):
+                # Es idéntico: incrementar contador en lugar de crear nueva entrada
+                ultimo_misma_carpeta['veces'] = ultimo_misma_carpeta.get('veces', 1) + 1
+                ultimo_misma_carpeta['timestamp'] = datetime.now().isoformat()  # Actualizar timestamp
+                self.guardar_historial()
+                # Ejecutar callback si existe para actualizar UI
+                if self.callback_actualizar:
+                    self.callback_actualizar()
+                return
+
+        # Es diferente o es primera vez de esta carpeta: agregar como nueva entrada
+        self.historial.append(nuevo_analisis)
         self.guardar_historial()
         # Ejecutar callback si existe para actualizar UI
         if self.callback_actualizar:
@@ -307,14 +421,16 @@ class GestorHistorialAnalisis:
         try:
             with open(archivo_salida, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Timestamp', 'Carpeta', 'Total Archivos', 'Formato',
+                writer.writerow(['Timestamp', 'Carpeta', 'Veces', 'Total Archivos', 'Formato',
                                  'Cantidad', 'Ratio Promedio (MB/min)'])
 
                 for analisis in self.historial:
+                    veces = analisis.get('veces', 1)
                     for ext, stats in analisis['estadisticas_por_formato'].items():
                         writer.writerow([
                             analisis['timestamp'],
                             analisis['carpeta'],
+                            veces,
                             analisis['total_archivos'],
                             ext,
                             stats['cantidad'],
@@ -342,7 +458,13 @@ class GestorHistorialAnalisis:
             return "No hay análisis registrados"
 
         total = len(self.historial)
-        return f"Total análisis registrados: {total}"
+        total_repeticiones = sum(analisis.get('veces', 1) - 1 for analisis in self.historial)
+        resumen = f"Total análisis únicos: {total}"
+        if total_repeticiones > 0:
+            total_ejecuciones = total + total_repeticiones
+            resumen += (f" | Total ejecuciones (incluyendo repetidas): {total_ejecuciones}"
+                        f" | Análisis duplicados: {total_repeticiones}")
+        return resumen
 
     def limpiar_historial(self):
         """Limpia todo el historial"""
@@ -1449,11 +1571,12 @@ class AnalizadorVideosApp:
         if not self.resultados:
             messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
-        
+
         duraciones = [dur for _, dur, _ in self.resultados]
-        
+
         # Elegir estilo disponible
-        preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid', 'seaborn', 'ggplot', 'default']
+        preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid',
+                            'seaborn', 'ggplot', 'default']
         for s in preferred_styles:
             if s in plt.style.available:
                 try:
@@ -1468,9 +1591,9 @@ class AnalizadorVideosApp:
 
         # Calcular número de bins óptimo
         n_bins = max(15, int(np.ceil(np.log2(len(duraciones)) + 1)))
-        
+
         # Crear histograma con colores degradados
-        n, bins, patches = ax.hist(duraciones, bins=n_bins, edgecolor='#2c3e50', 
+        _, bins, patches = ax.hist(duraciones, bins=n_bins, edgecolor='#2c3e50',
                                    alpha=0.8, linewidth=1.2)
 
         # Colorear los bins con degradado según frecuencia
@@ -1489,13 +1612,13 @@ class AnalizadorVideosApp:
         q3 = np.percentile(duraciones, 75)
 
         # Líneas de referencia con estadísticas
-        ax.axvline(media, color='#e74c3c', linestyle='--', linewidth=2.5, 
+        ax.axvline(media, color='#e74c3c', linestyle='--', linewidth=2.5,
                   label=f'Media: {media:.1f} min', alpha=0.9)
-        ax.axvline(mediana, color='#3498db', linestyle='-.', linewidth=2.5, 
+        ax.axvline(mediana, color='#3498db', linestyle='-.', linewidth=2.5,
                   label=f'Mediana: {mediana:.1f} min', alpha=0.9)
-        ax.axvline(q1, color='#95a5a6', linestyle=':', linewidth=1.5, 
+        ax.axvline(q1, color='#95a5a6', linestyle=':', linewidth=1.5,
                   label=f'Q1: {q1:.1f} min', alpha=0.7)
-        ax.axvline(q3, color='#95a5a6', linestyle=':', linewidth=1.5, 
+        ax.axvline(q3, color='#95a5a6', linestyle=':', linewidth=1.5,
                   label=f'Q3: {q3:.1f} min', alpha=0.7)
 
         # Zona sombreada para rangos interpretativos
@@ -1503,13 +1626,13 @@ class AnalizadorVideosApp:
         ax.axvspan(5, 20, alpha=0.1, color='#f39c12', label='Corto (5-20 min)')
         ax.axvspan(20, 60, alpha=0.1, color='#2ecc71', label='Normal (20-60 min)')
         if max(duraciones) > 60:
-            ax.axvspan(60, max(duraciones) + 5, alpha=0.1, color='#3498db', 
+            ax.axvspan(60, max(duraciones) + 5, alpha=0.1, color='#3498db',
                       label='Largo (> 60 min)')
 
         # Etiquetas y título mejorados
         ax.set_xlabel('Duración (minutos)', fontsize=12, fontweight='bold', color='#2c3e50')
         ax.set_ylabel('Cantidad de vídeos', fontsize=12, fontweight='bold', color='#2c3e50')
-        ax.set_title('Distribución de duraciones de vídeos', fontsize=14, fontweight='bold', 
+        ax.set_title('Distribución de duraciones de vídeos', fontsize=14, fontweight='bold',
                     color='#2c3e50', pad=20)
 
         # Grid mejorado
@@ -1517,17 +1640,20 @@ class AnalizadorVideosApp:
         ax.set_axisbelow(True)
 
         # Leyenda mejorada
-        legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.95, 
+        legend = ax.legend(loc='upper right', fontsize=10, framealpha=0.95,
                           edgecolor='#2c3e50', fancybox=True, shadow=True, ncol=2)
         legend.get_frame().set_facecolor('#ecf0f1')
 
         # Estadísticas en texto
         muy_cortos = sum(1 for d in duraciones if d < 5)
         muy_largos = sum(1 for d in duraciones if d > 60)
-        stats_text = f'Total: {len(duraciones)} vídeos\nDesv. Est: {np.std(duraciones):.1f} min\nRango: {min(duraciones):.1f} - {max(duraciones):.1f} min\nMuy cortos (<5 min): {muy_cortos}\nMuy largos (>60 min): {muy_largos}'
+        stats_text = (f'Total: {len(duraciones)} vídeos\nDesv. Est: {np.std(duraciones):.1f} min\n'
+                      f'Rango: {min(duraciones):.1f} - {max(duraciones):.1f} min\n'
+                      f'Muy cortos (<5 min): {muy_cortos}\nMuy largos (>60 min): {muy_largos}')
         ax.text(0.5, 0.98, stats_text, transform=ax.transAxes,
                fontsize=10, verticalalignment='top', horizontalalignment='center',
-               bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.9, edgecolor='#2c3e50', pad=0.8),
+               bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.9,
+                         edgecolor='#2c3e50', pad=0.8),
                family='monospace', fontweight='bold', color='#2c3e50')
 
         # Mejorar apariencia general
@@ -1581,7 +1707,7 @@ class AnalizadorVideosApp:
         # --- Subplot 1: Archivos MKV ---
         if ratios_mkv:
             n_bins = max(10, int(np.ceil(np.log2(len(ratios_mkv)) + 1)))
-            n, bins, patches = ax1.hist(ratios_mkv, bins=n_bins, color='#9fb3c8',
+            _, bins, patches = ax1.hist(ratios_mkv, bins=n_bins, color='#9fb3c8',
                                          edgecolor='#2b5f78', alpha=0.75, linewidth=1.2)
 
             # Colorear los bins en degradado
@@ -1598,23 +1724,26 @@ class AnalizadorVideosApp:
             std_mkv = np.std(ratios_mkv)
             min_mkv = min(ratios_mkv)
             max_mkv = max(ratios_mkv)
-            
+
             ax1.axvline(media_mkv, color='#e74c3c', linestyle='--', linewidth=2.5,
                        label=f'Media: {media_mkv:.2f}', alpha=0.9)
             ax1.axvline(mediana_mkv, color='#3498db', linestyle='-.', linewidth=2.5,
                        label=f'Mediana: {mediana_mkv:.2f}', alpha=0.9)
 
             # Caja de estadísticas
-            stats_mkv = f'n = {len(ratios_mkv)}\nMedia: {media_mkv:.2f} MB/min\nMediana: {mediana_mkv:.2f} MB/min\nDesv. Est: {std_mkv:.2f}\nRango: {min_mkv:.2f} - {max_mkv:.2f}'
+            stats_mkv = (f'n = {len(ratios_mkv)}\nMedia: {media_mkv:.2f} MB/min\n'
+                         f'Mediana: {mediana_mkv:.2f} MB/min\nDesv. Est: {std_mkv:.2f}\n'
+                         f'Rango: {min_mkv:.2f} - {max_mkv:.2f}')
             ax1.text(0.98, 0.97, stats_mkv, transform=ax1.transAxes,
                     fontsize=10, verticalalignment='top', horizontalalignment='right',
-                    bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95, 
+                    bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95,
                              edgecolor='#2c3e50', pad=0.8, linewidth=1.5),
                     family='monospace', fontweight='bold', color='#2c3e50')
 
             ax1.set_xlabel('Ratio (MB/min)', fontsize=11, fontweight='bold')
             ax1.set_ylabel('Frecuencia', fontsize=11, fontweight='bold')
-            ax1.set_title(f'Archivos MKV (n={len(ratios_mkv)})', fontsize=12, fontweight='bold', color='#2c3e50')
+            ax1.set_title(f'Archivos MKV (n={len(ratios_mkv)})', fontsize=12, fontweight='bold',
+                          color='#2c3e50')
             ax1.legend(loc='upper left', fontsize=10, framealpha=0.9, edgecolor='#2c3e50')
             ax1.grid(True, alpha=0.3, linestyle='--')
         else:
@@ -1625,7 +1754,7 @@ class AnalizadorVideosApp:
         # --- Subplot 2: Otros formatos ---
         if ratios_otros:
             n_bins = max(10, int(np.ceil(np.log2(len(ratios_otros)) + 1)))
-            n, bins, patches = ax2.hist(ratios_otros, bins=n_bins, color='#9fb3c8',
+            _, bins, patches = ax2.hist(ratios_otros, bins=n_bins, color='#9fb3c8',
                                          edgecolor='#2b5f78', alpha=0.75, linewidth=1.2)
 
             # Colorear los bins en degradado
@@ -1642,14 +1771,16 @@ class AnalizadorVideosApp:
             std_otros = np.std(ratios_otros)
             min_otros = min(ratios_otros)
             max_otros = max(ratios_otros)
-            
+
             ax2.axvline(media_otros, color='#e74c3c', linestyle='--', linewidth=2.5,
                        label=f'Media: {media_otros:.2f}', alpha=0.9)
             ax2.axvline(mediana_otros, color='#3498db', linestyle='-.', linewidth=2.5,
                        label=f'Mediana: {mediana_otros:.2f}', alpha=0.9)
 
             # Caja de estadísticas
-            stats_otros = f'n = {len(ratios_otros)}\nMedia: {media_otros:.2f} MB/min\nMediana: {mediana_otros:.2f} MB/min\nDesv. Est: {std_otros:.2f}\nRango: {min_otros:.2f} - {max_otros:.2f}'
+            stats_otros = (f'n = {len(ratios_otros)}\nMedia: {media_otros:.2f} MB/min\n'
+                           f'Mediana: {mediana_otros:.2f} MB/min\nDesv. Est: {std_otros:.2f}\n'
+                           f'Rango: {min_otros:.2f} - {max_otros:.2f}')
             ax2.text(0.98, 0.97, stats_otros, transform=ax2.transAxes,
                     fontsize=10, verticalalignment='top', horizontalalignment='right',
                     bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.95,
@@ -1658,7 +1789,8 @@ class AnalizadorVideosApp:
 
             ax2.set_xlabel('Ratio (MB/min)', fontsize=11, fontweight='bold')
             ax2.set_ylabel('Frecuencia', fontsize=11, fontweight='bold')
-            ax2.set_title(f'Otros formatos (n={len(ratios_otros)})', fontsize=12, fontweight='bold', color='#2c3e50')
+            ax2.set_title(f'Otros formatos (n={len(ratios_otros)})', fontsize=12, fontweight='bold',
+                          color='#2c3e50')
             ax2.legend(loc='upper left', fontsize=10, framealpha=0.9, edgecolor='#2c3e50')
             ax2.grid(True, alpha=0.3, linestyle='--')
         else:
@@ -1666,7 +1798,7 @@ class AnalizadorVideosApp:
                     transform=ax2.transAxes, fontsize=12, color='gray')
             ax2.set_title('Otros formatos (n=0)', fontsize=12, fontweight='bold', color='#7f8c8d')
 
-        fig.suptitle('Histograma: distribución de Peso/Duración (MB/min)', 
+        fig.suptitle('Histograma: distribución de Peso/Duración (MB/min)',
                      fontsize=14, fontweight='bold', y=0.995, color='#2c3e50')
         plt.tight_layout()
         plt.show()
@@ -1799,12 +1931,12 @@ class AnalizadorVideosApp:
         if self._analisis_future and not self._analisis_future.done():
             try:
                 self._analisis_future.cancel()
-            except Exception:
+            except (RuntimeError, CancelledError):
                 pass
         if self._analysis_executor:
             try:
                 self._analysis_executor.shutdown(wait=wait)
-            except Exception:
+            except (RuntimeError, OSError):
                 pass
             finally:
                 self._analysis_executor = None
@@ -1893,17 +2025,6 @@ class AnalizadorVideosApp:
                 if parent_basename == "errores":
                     print(f"Archivo ya en 'errores', no se mueve: {ruta}")
                 skip_video = True
-            except Exception as e:
-                # Capturar cualquier otra excepción inesperada sin detener el análisis
-                exc_msg = f"Error inesperado: {str(e)}"
-                self.texto_archivos.config(state="normal")
-                try:
-                    self.texto_archivos.insert('1.0', exc_msg + "\n")
-                except tk.TclError:
-                    pass
-                self.texto_archivos.config(state="disabled")
-                self._registrar_video_problema(ruta, archivo, exc_msg)
-                skip_video = True
 
             porcentaje = int((idx / total) * 100)
             self.root.after(0, lambda val=idx,
@@ -1990,8 +2111,8 @@ class AnalizadorVideosApp:
         for ext, avg in sorted(avg_by_ext.items(), key=lambda x: x[0]):
             resumen_lines.append(f"- {ext}: {avg:.2f} MB/min\n")
         resumen_lines.append("\nArchivos movidos durante el análisis:\n")
-        for k in moved_counts:
-            resumen_lines.append(f"- {moved_counts[k]} archivos -> {k}\n")
+        for k, v in moved_counts.items():
+            resumen_lines.append(f"- {v} archivos -> {k}\n")
         if self.videos_problema:
             resumen_lines.append(
                 f"\nSe detectaron {len(self.videos_problema)} vídeos problemáticos."
@@ -2008,7 +2129,7 @@ class AnalizadorVideosApp:
 
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
         self.root.after(0, destruir_barra)
-        
+
         # Registrar el análisis en el historial con estadísticas por formato
         self.gestor_historial.registrar_analisis(
             carpeta=self.carpeta,
@@ -2016,7 +2137,7 @@ class AnalizadorVideosApp:
             avg_by_ext=avg_by_ext,
             total_archivos=len(self.resultados)
         )
-        
+
         # Actualiza resultados para mostrar solo nombre, duracion, peso
         self.resultados = [(nombre, duracion, peso) for nombre, duracion, peso, _, _ in resultados]
 
@@ -2208,13 +2329,16 @@ class AnalizadorVideosApp:
             timestamp = analisis.get('timestamp', 'N/A')
             carpeta = analisis.get('carpeta', 'N/A')
             total_archivos = analisis.get('total_archivos', 0)
-            
+            veces = analisis.get('veces', 1)
+
             # Encabezado del análisis
             linea_encabezado = f"\n{'='*100}\n"
-            linea_encabezado += f"📅 {timestamp} | 📁 {carpeta} | 📊 Total: {total_archivos} archivos\n"
+            veces_str = f" (Repetido {veces} veces)" if veces > 1 else ""
+            linea_encabezado += (f"Fecha: {timestamp} | Carpeta: {carpeta} | Total: {total_archivos} "
+            f"archivos{veces_str}\n")
             linea_encabezado += f"{'='*100}\n"
             texto.insert(tk.END, linea_encabezado)
-            
+
             # Estadísticas por formato
             stats = analisis.get('estadisticas_por_formato', {})
             if stats:
@@ -2222,7 +2346,8 @@ class AnalizadorVideosApp:
                 for ext in sorted(stats.keys()):
                     cant = stats[ext]['cantidad']
                     ratio = stats[ext]['ratio_promedio_mb_min']
-                    linea = f"  {ext:10} │ Cantidad: {cant:4} │ Ratio promedio: {ratio:7.2f} MB/min\n"
+                    linea = (f"  {ext:10} | Cantidad: {cant:4} | "
+                             f"Ratio promedio: {ratio:7.2f} MB/min\n")
                     texto.insert(tk.END, linea)
             else:
                 texto.insert(tk.END, "Sin estadísticas disponibles.\n")
