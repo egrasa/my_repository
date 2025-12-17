@@ -93,7 +93,8 @@ def calcular_duracion_media(resultados):
 
 def calcular_rating_optimizacion(resultados):
     """
-    Calcula el rating de optimización (1-5 estrellas) basado en el porcentaje de archivos bien optimizados.
+    Calcula el rating de optimización (1-5 estrellas) basado
+    en el porcentaje de archivos bien optimizados.
     
     Criterios:
     - Archivos < 10 MB/min: Descartados (baja calidad)
@@ -109,15 +110,15 @@ def calcular_rating_optimizacion(resultados):
     """
     if not resultados:
         return 0, 0, 0, 0, "Sin datos"
-    
+
     bien_optimizados = 0
     mal_optimizados = 0
-    
-    for nombre, duracion, peso, *_ in resultados:
+
+    for _nombre, duracion, peso, *_ in resultados:
         if duracion <= 0:
             continue
         ratio = peso / duracion
-        
+
         # Descartar archivos < 10 MB/min (baja calidad)
         if ratio < 10:
             continue
@@ -126,15 +127,15 @@ def calcular_rating_optimizacion(resultados):
             bien_optimizados += 1
         else:
             mal_optimizados += 1
-    
+
     total_contable = bien_optimizados + mal_optimizados
-    
+
     if total_contable == 0:
         return 0, 0, 0, 0, "Sin archivos contables"
-    
+
     pct_bien = (bien_optimizados / total_contable) * 100
-    pct_mal = (mal_optimizados / total_contable) * 100
-    
+    _pct_mal = (mal_optimizados / total_contable) * 100
+
     # Asignar estrellas
     if pct_bien >= 90:
         estrellas = 5
@@ -151,11 +152,12 @@ def calcular_rating_optimizacion(resultados):
     else:
         estrellas = 1
         categoria = "Crítico"
-    
+
     return estrellas, pct_bien, bien_optimizados, mal_optimizados, categoria
 
 def mostrar_grafico(resultados, carpeta):
-    """ Muestra un gráfico de dispersión mejorado de duración vs tamaño de los vídeos con subplot de distribución """
+    """ Muestra un gráfico de dispersión mejorado de duración vs tamaño
+    de los vídeos con subplot de distribución """
     if not resultados:
         messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
@@ -175,7 +177,7 @@ def mostrar_grafico(resultados, carpeta):
     # Crear figura con 2 subplots
     fig = plt.figure(figsize=(16, 8))
     fig.patch.set_facecolor('#f5f5f5')
-    
+
     # Subplot principal (scatter)
     ax1 = plt.subplot(1, 2, 1)
     ax1.set_facecolor('#ffffff')
@@ -309,7 +311,7 @@ def mostrar_grafico(resultados, carpeta):
     datos_rangos = []
     etiquetas_rangos = []
     colores_rangos = []
-    
+
     for min_ratio, max_ratio, etiqueta, color in rangos:
         cantidad = sum(1 for r in ratios if min_ratio <= r < max_ratio)
         if cantidad > 0:  # Solo mostrar rangos con datos
@@ -320,15 +322,16 @@ def mostrar_grafico(resultados, carpeta):
     # Gráfico de barras horizontal
     if datos_rangos:
         y_pos = np.arange(len(datos_rangos))
-        barras = ax2.barh(y_pos, datos_rangos, color=colores_rangos, edgecolor='#2c3e50', linewidth=1.5)
-        
+        barras = ax2.barh(y_pos, datos_rangos, color=colores_rangos, edgecolor='#2c3e50',
+                          linewidth=1.5)
+
         # Agregar valores en las barras
         for i, (barra, valor) in enumerate(zip(barras, datos_rangos)):
             porcentaje = (valor / len(ratios)) * 100
             ax2.text(barra.get_width() + 0.5, barra.get_y() + barra.get_height()/2,
-                    f'{valor} ({porcentaje:.1f}%)', 
+                    f'{valor} ({porcentaje:.1f}%)',
                     va='center', fontsize=10, fontweight='bold', color='#2c3e50')
-        
+
         ax2.set_yticks(y_pos)
         ax2.set_yticklabels(etiquetas_rangos, fontsize=10)
         ax2.set_xlabel('Cantidad de archivos', fontsize=11, fontweight='bold', color='#2c3e50')
@@ -336,14 +339,14 @@ def mostrar_grafico(resultados, carpeta):
                      color='#2c3e50', pad=15)
         ax2.grid(True, alpha=0.3, axis='x', linestyle='--', linewidth=0.7, color='#bdc3c7')
         ax2.set_axisbelow(True)
-        
+
         # Mejorar apariencia
         ax2.spines['top'].set_visible(False)
         ax2.spines['right'].set_visible(False)
         ax2.spines['left'].set_color('#2c3e50')
         ax2.spines['bottom'].set_color('#2c3e50')
         ax2.tick_params(colors='#2c3e50', labelsize=9)
-        
+
         # Agregar información resumida
         info_text = (f'Total archivos: {len(ratios)}\n'
                     f'Ratio promedio: {np.mean(ratios):.2f} MB/min\n'
@@ -436,10 +439,11 @@ class GestorHistorialAnalisis:
         if ultimo_misma_carpeta is not None:
             # Verificar si tiene los mismos datos
             if (ultimo_misma_carpeta['total_archivos'] == total_archivos and
-                ultimo_misma_carpeta['estadisticas_por_formato'] == nuevo_analisis['estadisticas_por_formato']):
+                ultimo_misma_carpeta['estadisticas_por_formato'] == nuevo_analisis[
+                    'estadisticas_por_formato']):
                 # Es idéntico: incrementar contador en lugar de crear nueva entrada
                 ultimo_misma_carpeta['veces'] = ultimo_misma_carpeta.get('veces', 1) + 1
-                ultimo_misma_carpeta['timestamp'] = datetime.now().isoformat()  # Actualizar timestamp
+                ultimo_misma_carpeta['timestamp'] = datetime.now().isoformat()
                 self.guardar_historial()
                 # Ejecutar callback si existe para actualizar UI
                 if self.callback_actualizar:
@@ -2168,18 +2172,23 @@ class AnalizadorVideosApp:
         resumen_lines = []
         resumen_lines.append("\nResumen del análisis:\n")
         resumen_lines.append("="*80 + "\n")
-        
+
         # Calcular rating
-        estrellas_rating, pct_bien, bien_opt, mal_opt, categoria_rating = calcular_rating_optimizacion(resultados)
+        estrellas_rating, pct_bien, bien_opt, mal_opt, categoria_rating = (
+            calcular_rating_optimizacion(resultados))
         estrella_llena = "★"
         estrella_vacia = "☆"
-        representacion_estrellas = estrella_llena * estrellas_rating + estrella_vacia * (5 - estrellas_rating)
-        
-        resumen_lines.append(f"\nRATING DE OPTIMIZACIÓN: {representacion_estrellas} - {categoria_rating}\n")
-        resumen_lines.append(f"Archivos bien optimizados (10-100 MB/min): {bien_opt} ({pct_bien:.1f}%)\n")
-        resumen_lines.append(f"Archivos mal optimizados (>100 MB/min): {mal_opt} ({100-pct_bien:.1f}%)\n")
+        representacion_estrellas = (
+            estrella_llena * estrellas_rating + estrella_vacia * (5 - estrellas_rating))
+
+        resumen_lines.append(f"\nRATING DE OPTIMIZACIÓN: {representacion_estrellas} - "
+                             f"{categoria_rating}\n")
+        resumen_lines.append(f"Archivos bien optimizados (10-100 MB/min): {bien_opt} "
+                             f"({pct_bien:.1f}%)\n")
+        resumen_lines.append(f"Archivos mal optimizados (>100 MB/min): {mal_opt} "
+                             f"({100-pct_bien:.1f}%)\n")
         resumen_lines.append("="*80 + "\n")
-        
+
         resumen_lines.append("\nNúmero de archivos por extensión:\n")
         for ext, cnt in sorted(counts_by_ext.items(), key=lambda x: x[0]):
             resumen_lines.append(f"- {cnt} archivos {ext}\n")
@@ -2230,15 +2239,16 @@ class AnalizadorVideosApp:
                 return
             peso_medio = calcular_peso_medio(self.resultados)
             duracion_media = calcular_duracion_media(self.resultados)
-            estrellas, pct_bien, bien_opt, mal_opt, categoria = calcular_rating_optimizacion(self.resultados)
-            
+            estrellas, _pct_bien, _bien_opt, _mal_opt, categoria = (
+                calcular_rating_optimizacion(self.resultados))
+
             total_archivos = len(self.resultados)
-            
+
             # Crear representación visual de estrellas
             estrella_llena = "★"
             estrella_vacia = "☆"
             representacion_estrellas = estrella_llena * estrellas + estrella_vacia * (5 - estrellas)
-            
+
             resultados_text =(f"Peso medio por minuto: {peso_medio:.2f} MB/min"
                      f"   |   Duración media: {duracion_media:.1f} min"
                      f"   |   Total archivos: {total_archivos}"
@@ -2275,7 +2285,7 @@ class AnalizadorVideosApp:
                 self.boton_visual["state"] = "normal"
                 # Elimina tooltip si existe (crea uno vacío)
                 ToolTip(self.boton_visual, "")
-            
+
             # Mostrar solo el resumen en la pestaña Resultados
             try:
                 self.texto_archivos.config(state="normal")
@@ -2371,7 +2381,7 @@ class AnalizadorVideosApp:
         """Muestra una ventana con el historial de análisis realizados"""
         # Recargar el historial desde el archivo para asegurar que está actualizado
         self.gestor_historial.cargar_historial()
-        
+
         if not self.gestor_historial.historial:
             messagebox.showinfo("Historial", "No hay análisis registrados aún.")
             return
@@ -2413,7 +2423,8 @@ class AnalizadorVideosApp:
             # Encabezado del análisis
             linea_encabezado = f"\n{'='*100}\n"
             veces_str = f" (Repetido {veces} veces)" if veces > 1 else ""
-            linea_encabezado += (f"Fecha: {timestamp} | Carpeta: {carpeta} | Total: {total_archivos} "
+            linea_encabezado += (f"Fecha: {timestamp} | Carpeta: {carpeta} | "
+                                 f"Total: {total_archivos} "
             f"archivos{veces_str}\n")
             linea_encabezado += f"{'='*100}\n"
             texto.insert(tk.END, linea_encabezado)
@@ -2600,5 +2611,8 @@ class AnalizadorVideosApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    # Establecer tamaño fijo de la ventana
+    root.geometry("1080x640")
+    root.resizable(False, False)  # Deshabilitar redimensionamiento
     app = AnalizadorVideosApp(root)
     root.mainloop()
