@@ -1,5 +1,6 @@
 """A simple GUI application for managing tasks using Tkinter."""
 
+import random
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
 from tkinter import filedialog as fd
@@ -69,8 +70,11 @@ class TaskManagerApp:
 
         # column sort state: True means ascending next time
         self._sort_state = {}
+        self._last_sort_column = None
+        self._last_sort_ascending = True
         # category -> tag mapping and palette
         self._category_tag_map = {}
+        self._category_color_map = {}
         # pleasant pastel palette for categories
         self._palette = [
             "#F88585",
@@ -118,10 +122,12 @@ class TaskManagerApp:
         ttk.Label(form, text="Price:").grid(row=1, column=2, sticky=tk.W)
         ttk.Entry(form, textvariable=self.price_var, width=12).grid(row=1, column=3, sticky=tk.W)
 
-        ttk.Label(form, text="Level:").grid(row=2, column=0, sticky=tk.W)
-        ttk.Spinbox(form, from_=0, to=10, textvariable=self.level_var, width=6).grid(row=2,
-                                                                                     column=1,
+        ttk.Label(form, text="Level:").grid(row=1, column=5, sticky=tk.W)
+        ttk.Spinbox(form, from_=0, to=10, textvariable=self.level_var, width=6).grid(row=1,
+                                                                                     column=7,
                                                                                      sticky=tk.W)
+        ttk.Button(form, text="Ver por categoria",
+               command=self._open_category_browser).grid(row=1, column=8, padx=(5, 0))
 
         # Buttons
         btn_frame = ttk.Frame(frame)
@@ -154,6 +160,9 @@ class TaskManagerApp:
         minus_btn = tk.Button(filter_frame, text="-", width=3, font=big_btn_font,
                               command=self._dec_count)
         minus_btn.pack(side='right', padx=(8, 0))
+
+        ttk.Button(filter_frame, text="colors",
+               command=self._randomize_category_colors).pack(side=tk.LEFT, padx=(8, 0))
 
         # sum of totals label (placed under the filter controls)
         sum_frame = ttk.Frame(frame)
@@ -213,6 +222,9 @@ class TaskManagerApp:
             self.total_sum_var.set(f"${sum_total:,.2f}")
         except (ValueError, TypeError):
             self.total_sum_var.set("$0.00")
+        if self._last_sort_column:
+            # reapply the last sort to keep order consistent while items are added
+            self._sort_by(self._last_sort_column, self._last_sort_ascending)
 
     def _reset_all_counts(self):
         """Ask for confirmation and reset all tasks' done counters to zero."""
@@ -274,7 +286,6 @@ class TaskManagerApp:
 
     def _ensure_tag_for_category(self, category: str) -> str:
         """Return a tag name for a category, creating and configuring it if needed.
-
         The color is chosen deterministically from a small palette.
         """
         # normalize empty
@@ -283,7 +294,15 @@ class TaskManagerApp:
             return self._category_tag_map[cat_key]
 
         # deterministic pick based on hash
-        color = self._palette[abs(hash(cat_key)) % len(self._palette)]
+        used = set(self._category_color_map.values())
+        palette_idx = abs(hash(cat_key)) % len(self._palette)
+        candidate = self._palette[palette_idx]
+        if candidate in used:
+            available = [c for c in self._palette if c not in used]
+            color = available[0] if available else candidate
+        else:
+            color = candidate
+        self._category_color_map[cat_key] = color
         # small stable tag name
         tag_name = f"cat_{abs(hash(cat_key)) % 100000}"
         try:
@@ -294,6 +313,82 @@ class TaskManagerApp:
             pass
         self._category_tag_map[cat_key] = tag_name
         return tag_name
+
+    def _color_for_category(self, category: str) -> str:
+        cat_key = category or "__none__"
+        return self._palette[abs(hash(cat_key)) % len(self._palette)]
+
+    def _randomize_category_colors(self):
+        random.shuffle(self._palette)
+        self._category_tag_map.clear()
+        self._category_color_map.clear()
+        for iid in self.tree.get_children(''):
+            vals = self.tree.item(iid, 'values')
+            cat = vals[1]
+            tag = self._ensure_tag_for_category(cat or "")
+            self.tree.item(iid, tags=(tag,))
+
+    def _open_category_browser(self):
+        tasks = self.db.list_tasks()
+        categories = sorted({t.get("category") for t in tasks if t.get("category")})
+        if not categories:
+            messagebox.showinfo("Categorías", "No hay categorías definidas aún.")
+            return
+
+        viewer = tk.Toplevel(self.root)
+        viewer.title("Explorador de categorías")
+        viewer.geometry("800x400")
+        viewer.transient(self.root)
+        viewer.grab_set()
+
+        initial_bg = self._color_for_category(categories[0])
+        viewer.configure(bg=initial_bg)
+        frame = tk.Frame(viewer, bg=initial_bg, padx=12, pady=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(frame, bg=initial_bg)
+        header.pack(fill=tk.X)
+        cat_label = tk.Label(header, text="", font=("Baloo", 20, "bold"),
+                             bg=initial_bg, fg="black")
+        cat_label.pack(side=tk.LEFT)
+
+        nav = tk.Frame(header, bg=initial_bg)
+        nav.pack(side=tk.RIGHT)
+        state = {"index": 0}
+
+        def refresh():
+            idx = state["index"] % len(categories)
+            cat = categories[idx]
+            cat_label.config(text=f"{cat} ({idx + 1}/{len(categories)})")
+            current_bg = self._color_for_category(cat)
+            viewer.configure(bg=current_bg)
+            frame.configure(bg=current_bg)
+            header.configure(bg=current_bg)
+            nav.configure(bg=current_bg)
+            cat_label.config(bg=current_bg)
+            listbox.config(bg=current_bg)
+            listbox.delete(0, tk.END)
+            for t in tasks:
+                if t.get("category") == cat:
+                    price = float(t.get("price", 0) or 0)
+                    done = int(t.get("done", 0) or 0)
+                    listbox.insert(tk.END, f"{t.get('title', 'Untitled')} — ${price:.2f} × {done}")
+            if listbox.size() == 0:
+                listbox.insert(tk.END, "No tasks for this category")
+
+        def change(offset):
+            state["index"] = (state["index"] + offset) % len(categories)
+            refresh()
+
+        ttk.Button(nav, text="◀ Anterior", command=lambda: change(-1)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav, text="Siguiente ▶", command=lambda: change(1)).pack(side=tk.LEFT, padx=2)
+
+        listbox = tk.Listbox(frame, borderwidth=0, highlightthickness=0)
+        listbox.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+
+        listbox.config(font=("Segoe UI", 13), fg="black")
+
+        refresh()
 
     def _populate_category_filter(self, tasks=None):
         if tasks is None:
@@ -364,6 +459,8 @@ class TaskManagerApp:
                 arrow = " ▲" if ascending else " ▼"
             self.tree.heading(col, text=base + arrow,
                               command=lambda c=col: self._on_heading_click(c))
+        self._last_sort_column = column
+        self._last_sort_ascending = ascending
 
     def _inc_count(self):
         sel = self.tree.selection()
