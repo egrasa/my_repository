@@ -16,6 +16,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from moviepy import VideoFileClip
 
+
+def _silenciar_tkerrar_mainloop():
+    """Evita los errores "main thread is not in main loop" al cerrar Tkinter"""
+    def _wrap(cls, attr):
+        original = getattr(cls, attr, None)
+        if not original:
+            return
+
+        def safe_del(self):
+            try:
+                return original(self)
+            except RuntimeError as exc:
+                if "main thread is not in main loop" in str(exc):
+                    return
+                raise
+
+        setattr(cls, attr, safe_del)
+
+    _wrap(tk.Variable, "__del__")
+    _wrap(tk.Image, "__del__")
+
+
+_silenciar_tkerrar_mainloop()
+
 # --- Colores estilo oscuro ---
 COLOR_BG = "#23272a"
 COLOR_FRAME = "#2c2f33"
@@ -39,9 +63,9 @@ def mostrar_grafico_visual(resultados, carpeta):
     if not resultados:
         messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
-    nombres = [nombre for nombre, _, _ in resultados]
-    duraciones = [dur for _, dur, _ in resultados]
-    relaciones = [(peso / dur) if dur > 0 else 0 for _, dur, peso in resultados]
+    nombres = [r[0] for r in resultados]
+    duraciones = [r[1] for r in resultados]
+    relaciones = [(r[2] / r[1]) if r[1] > 0 else 0 for r in resultados]
 
     # Identificar índices del video más largo y más corto
     idx_max = duraciones.index(max(duraciones))
@@ -78,8 +102,8 @@ def calcular_peso_medio(resultados):
     """ Calcula el peso medio por minuto de los vídeos analizados """
     if not resultados:
         return 0
-    total_peso = sum(peso for _, _, peso in resultados)
-    total_duracion = sum(duracion for _, duracion, _ in resultados)
+    total_peso = sum(r[2] for r in resultados)
+    total_duracion = sum(r[1] for r in resultados)
     if total_duracion == 0:
         return 0
     return total_peso / total_duracion
@@ -88,7 +112,7 @@ def calcular_duracion_media(resultados):
     """ Calcula la duración media de los vídeos analizados """
     if not resultados:
         return 0
-    total_duracion = sum(duracion for _, duracion, _ in resultados)
+    total_duracion = sum(r[1] for r in resultados)
     return total_duracion / len(resultados)
 
 def calcular_rating_optimizacion(resultados):
@@ -161,8 +185,8 @@ def mostrar_grafico(resultados, carpeta):
     if not resultados:
         messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
         return
-    duraciones = [dur for _, dur, _ in resultados]
-    pesos = [peso for _, _, peso in resultados]
+    duraciones = [r[1] for r in resultados]
+    pesos = [r[2] for r in resultados]
 
     # Elegir estilo disponible
     preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid', 'seaborn', 'ggplot', 'default']
@@ -207,7 +231,8 @@ def mostrar_grafico(resultados, carpeta):
                         edgecolor='#2c3e50', alpha=0.7, linewidth=1.5)
 
     # Anotaciones inteligentes: solo para valores destacados
-    for i, (nombre, dur, peso) in enumerate(resultados):
+    for i, r in enumerate(resultados):
+        nombre, dur, peso = r[0], r[1], r[2]
         ratio = ratios[i]
         # Anotar solo si supera 200 MB/min y duración > 5 min
         if ratio > 200 and dur > 5:
@@ -410,9 +435,9 @@ class GestorHistorialAnalisis:
         except IOError as e:
             print(f"Error guardando historial: {e}")
 
-    def registrar_analisis(self, carpeta, counts_by_ext, avg_by_ext, total_archivos):
-        """Registra un análisis con estadísticas por formato.
-        Si es idéntico al anterior de la misma carpeta, incrementa contador en lugar de duplicar."""
+    def registrar_analisis(self, carpeta, counts_by_ext, avg_by_ext, total_archivos, *,
+                           rating=None):
+        """Registra un análisis con estadísticas por formato y opcionalmente rating."""
         nuevo_analisis = {
             'timestamp': datetime.now().isoformat(),
             'carpeta': carpeta,
@@ -428,6 +453,15 @@ class GestorHistorialAnalisis:
                 'ratio_promedio_mb_min': round(avg_by_ext.get(ext, 0.0), 2)
             }
 
+        if rating is not None:
+            nuevo_analisis['rating'] = {
+                'estrellas': rating.get('estrellas'),
+                'pct_bien': rating.get('pct_bien'),
+                'bien_optimizados': rating.get('bien_optimizados'),
+                'mal_optimizados': rating.get('mal_optimizados'),
+                'categoria': rating.get('categoria')
+            }
+
         # Buscar el último análisis de la MISMA carpeta (no solo el último del historial)
         ultimo_misma_carpeta = None
         for entrada in reversed(self.historial):
@@ -438,9 +472,13 @@ class GestorHistorialAnalisis:
         # Comparar con el último análisis de la misma carpeta
         if ultimo_misma_carpeta is not None:
             # Verificar si tiene los mismos datos
-            if (ultimo_misma_carpeta['total_archivos'] == total_archivos and
+            datos_iguales = (ultimo_misma_carpeta['total_archivos'] == total_archivos and
                 ultimo_misma_carpeta['estadisticas_por_formato'] == nuevo_analisis[
-                    'estadisticas_por_formato']):
+                    'estadisticas_por_formato'])
+            if rating is not None:
+                datos_iguales = datos_iguales and (
+                    ultimo_misma_carpeta.get('rating') == nuevo_analisis.get('rating'))
+            if datos_iguales:
                 # Es idéntico: incrementar contador en lugar de crear nueva entrada
                 ultimo_misma_carpeta['veces'] = ultimo_misma_carpeta.get('veces', 1) + 1
                 ultimo_misma_carpeta['timestamp'] = datetime.now().isoformat()
@@ -586,6 +624,7 @@ class AnalizadorVideosApp:
         self.gestor_historial = GestorHistorialAnalisis(
             callback_actualizar=self._habilitar_botones_historial)
 
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.configure(bg=COLOR_BG)
 
         # Frame principal para selección de carpeta y análisis
@@ -787,41 +826,67 @@ class AnalizadorVideosApp:
 
         # --- CONTENIDO PESTAÑA GRÁFICOS ---
         graficos_buttons_frame = tk.Frame(self.frame_graficos, bg=COLOR_FRAME)
-        graficos_buttons_frame.pack(fill="x", pady=10)
+        graficos_buttons_frame.pack(fill="both", expand=True, pady=10, padx=10)
 
-        self.boton_grafico = tk.Button(graficos_buttons_frame, text="📈 Gráfico", relief="ridge",
-                                       command=self.mostrar_grafico, width=20,
-                                       bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
-                                       activebackground=COLOR_PROGRESS)
-        self.boton_grafico.pack(side="left", padx=5)
-        ToolTip(self.boton_grafico, "Muestra duración vs peso para los archivos analizados")
+        # Columna 1: Histogramas
+        col_histogramas = tk.Frame(graficos_buttons_frame, bg=COLOR_FRAME)
+        col_histogramas.pack(side="left", fill="both", expand=True, padx=10)
 
-        self.boton_histograma = tk.Button(graficos_buttons_frame, text="📊 Histograma duración",
-                                          width=20, command=self.mostrar_histograma_duraciones,
+        tk.Label(col_histogramas, text="📊 HISTOGRAMAS", bg=COLOR_FRAME, fg=COLOR_LABEL,
+                 font=("Arial", 10, "bold")).pack(pady=(0, 10))
+
+        self.boton_histograma = tk.Button(col_histogramas, text="📊 Histograma duración",
+                                          width=25, command=self.mostrar_histograma_duraciones,
                                           bg=COLOR_BUTTON, fg=COLOR_TEXT, relief="ridge",
                                           activebackground=COLOR_PROGRESS, state="disabled")
-        self.boton_histograma.pack(side="left", padx=5)
+        self.boton_histograma.pack(pady=5)
 
-        self.boton_boxplot = tk.Button(graficos_buttons_frame, text="📊 Histograma ratio", width=20,
+        self.boton_boxplot = tk.Button(col_histogramas, text="📊 Histograma ratio", width=25,
                                        command=self.mostrar_boxplot_ratio,
                                        bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
                                        activebackground=COLOR_PROGRESS, relief="ridge")
-        self.boton_boxplot.pack(side="left", padx=5)
+        self.boton_boxplot.pack(pady=5)
 
-        self.boton_visual = tk.Button(graficos_buttons_frame, text="Visual", width=20,
+        self.boton_histograma_altos = tk.Button(col_histogramas, text="📊 Histograma altos",
+                                                width=25, command=self.mostrar_histograma_altos,
+                                                bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
+                                                activebackground=COLOR_PROGRESS, relief="ridge")
+        self.boton_histograma_altos.pack(pady=5)
+
+        # Columna 2: Otros Gráficos
+        col_otros = tk.Frame(graficos_buttons_frame, bg=COLOR_FRAME)
+        col_otros.pack(side="left", fill="both", expand=True, padx=10)
+
+        tk.Label(col_otros, text="📈 OTROS GRÁFICOS", bg=COLOR_FRAME, fg=COLOR_LABEL,
+                 font=("Arial", 10, "bold")).pack(pady=(0, 10))
+
+        self.boton_grafico = tk.Button(col_otros, text="📈 Gráfico Duración/Peso", relief="ridge",
+                                       command=self.mostrar_grafico, width=25,
+                                       bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
+                                       activebackground=COLOR_PROGRESS)
+        self.boton_grafico.pack(pady=5)
+        ToolTip(self.boton_grafico, "Muestra duración vs peso para los archivos analizados")
+
+        self.boton_ratio_alto = tk.Button(col_otros, text="📈 Ratio vs Alto",
+                                          width=25, command=self.mostrar_grafico_ratio_vs_alto,
+                                          bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
+                                          activebackground=COLOR_PROGRESS, relief="ridge")
+        self.boton_ratio_alto.pack(pady=5)
+
+        self.boton_visual = tk.Button(col_otros, text="📊 Visual (Barras)", width=25,
                                     command=lambda: mostrar_grafico_visual(self.resultados,
                                                                            self.carpeta),
                                     bg=COLOR_BUTTON, fg=COLOR_TEXT, state="disabled",
                                     activebackground=COLOR_PROGRESS, relief="ridge")
-        self.boton_visual.pack(side="left", padx=5)
+        self.boton_visual.pack(pady=5)
 
-        self.boton_pie_previsualizar = tk.Button(graficos_buttons_frame,
-                             text="🥧 Pie Previsualizar", width=20,
+        self.boton_pie_previsualizar = tk.Button(col_otros,
+                             text="🥧 Pie Previsualizar", width=25,
                              command=self.mostrar_pie_previsualizar,
                              bg=COLOR_BUTTON, fg=COLOR_TEXT,
                              activebackground=COLOR_PROGRESS,
                              relief="ridge", state="disabled")
-        self.boton_pie_previsualizar.pack(side="left", padx=5)
+        self.boton_pie_previsualizar.pack(pady=5)
         ToolTip(self.boton_pie_previsualizar,
                 "Grafica el resumen de extensiones generado por Pre-visualizar")
 
@@ -883,7 +948,7 @@ class AnalizadorVideosApp:
         self.boton_mover_problemas.pack(side="right", padx=5)
 
         self.boton_busqueda_avanzada = tk.Button(extras_frame, text="Búsqueda avanzada",
-                            command=self.abrir_busqueda_avanzada,
+                            command=self.abrir_busqueda_avanzada, state="disabled",
                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
         self.boton_busqueda_avanzada.pack(side="right", padx=5)
 
@@ -997,15 +1062,11 @@ class AnalizadorVideosApp:
             # Si no hay archivos y no hay subcarpetas con archivos
             if not files and not any(os.listdir(os.path.join(rooti, d)) for d in dirs) and not dirs:
                 vacias.append(rooti)
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
         if vacias:
-            self.texto_archivos.insert('1.0', "Carpetas vacías:\n")
-            for carpeta in vacias:
-                self.texto_archivos.insert('1.0', carpeta + "\n")
+            texto = "Carpetas vacías:\n" + "\n".join(vacias) + "\n"
         else:
-            self.texto_archivos.insert('1.0', "No hay carpetas vacías.\n")
-        self.texto_archivos.config(state="disabled")
+            texto = "No hay carpetas vacías.\n"
+        self._set_texto_archivos(texto)
 
     def ver_lista_errores(self):
         """ Muestra los errores encontrados en un diálogo """
@@ -1098,10 +1159,7 @@ class AnalizadorVideosApp:
         for ext, cnt in sorted(counts.items(), key=lambda item: item[0]):
             resumen.append(f"- {cnt} archivos {ext}\n")
         texto = "".join(resumen)
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
-        self.texto_archivos.insert('1.0', texto)
-        self.texto_archivos.config(state="disabled")
+        self._set_texto_archivos(texto)
         self._actualizar_tabs_formatos(counts)
 
     def analizar_carpeta_interno(self):
@@ -1142,28 +1200,33 @@ class AnalizadorVideosApp:
         # Proceder con análisis normal usando threading
         self._parar_analisis = False  # Reset al iniciar
         # -- seleccionar la pestaña "Resultados" automáticamente --
-        try:
-            self.notebook.select(self.frame_resultados)
-        except (tk.TclError, AttributeError) as e:
+        def seleccionar_resultados():
             try:
-                print(f"Ignoring notebook selection error: {e}")
-            except OSError:
+                self.notebook.select(self.frame_resultados)
+            except (tk.TclError, AttributeError):
                 pass
-        self.boton_parar["state"] = "normal"
-        self.boton["state"] = "disabled"
-        self.boton_grafico["state"] = "disabled"
-        self.boton_histograma["state"] = "disabled"
-        self.boton_avi["state"] = "normal"
+        self.root.after(0, seleccionar_resultados)
+
+        self.root.after(0, lambda: self.boton_parar.config(state="normal"))
+        self.root.after(0, lambda: self.boton.config(state="disabled"))
+        self.root.after(0, lambda: self.boton_grafico.config(state="disabled"))
+        self.root.after(0, lambda: self.boton_histograma.config(state="disabled"))
+        self.root.after(0, lambda: self.boton_histograma_altos.config(state="disabled"))
+        self.root.after(0, lambda: self.boton_ratio_alto.config(state="disabled"))
+        self.root.after(0, lambda: self.boton_avi.config(state="normal"))
         # enable MOV tab controls as well
-        try:
-            self.boton_mov["state"] = "normal"
-        except AttributeError:
-            pass
-        try:
-            self.boton_mkv["state"] = "normal"
-        except AttributeError:
-            pass
-        self.boton_print_errores["state"] = "normal"
+        def habilitar_otros_botones():
+            try:
+                self.boton_mov.config(state="normal")
+            except AttributeError:
+                pass
+            try:
+                self.boton_mkv.config(state="normal")
+            except AttributeError:
+                pass
+            self.boton_print_errores.config(state="normal")
+        self.root.after(0, habilitar_otros_botones)
+
         threading.Thread(target=self._analizar_videos_thread, args=(self.carpeta,),
                          daemon=True).start()
 
@@ -1216,15 +1279,11 @@ class AnalizadorVideosApp:
             # Ignorar errores específicos de tkinter al actualizar el widget Text
             pass
         # mantener comportamiento previo en el Text principal
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
         if carpetas_con_avis:
-            self.texto_archivos.insert('1.0', "Carpetas con archivos .avi:\n")
-            for carpeta in carpetas_con_avis:
-                self.texto_archivos.insert('1.0', carpeta + "\n")
+            texto = "Carpetas con archivos .avi:\n" + "\n".join(carpetas_con_avis) + "\n"
         else:
-            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .avi.\n")
-        self.texto_archivos.config(state="disabled")
+            texto = "No se encontraron carpetas con archivos .avi.\n"
+        self._set_texto_archivos(texto)
 
     def mover_avis_a_carpeta(self):
         """Crea una carpeta 'avi' y mueve todos los archivos .avi a esa carpeta 
@@ -1331,15 +1390,11 @@ class AnalizadorVideosApp:
         except tk.TclError:
             pass
         # also mirror to main text box
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
         if carpetas_con_movs:
-            self.texto_archivos.insert('1.0', "Carpetas con archivos .mov:\n")
-            for carpeta in carpetas_con_movs:
-                self.texto_archivos.insert('1.0', carpeta + "\n")
+            texto = "Carpetas con archivos .mov:\n" + "\n".join(carpetas_con_movs) + "\n"
         else:
-            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .mov.\n")
-        self.texto_archivos.config(state="disabled")
+            texto = "No se encontraron carpetas con archivos .mov.\n"
+        self._set_texto_archivos(texto)
 
     def mover_movs_a_carpeta(self):
         """Crea una carpeta 'mov' y mueve todos los archivos .mov
@@ -1509,15 +1564,11 @@ class AnalizadorVideosApp:
             self.texto_mkv.config(state="disabled")
         except tk.TclError:
             pass
-        self.texto_archivos.config(state="normal")
-        self.texto_archivos.delete(1.0, tk.END)
         if carpetas:
-            self.texto_archivos.insert('1.0', "Carpetas con archivos .mkv:\n")
-            for c in carpetas:
-                self.texto_archivos.insert('1.0', c + "\n")
+            texto = "Carpetas con archivos .mkv:\n" + "\n".join(carpetas) + "\n"
         else:
-            self.texto_archivos.insert('1.0', "No se encontraron carpetas con archivos .mkv.\n")
-        self.texto_archivos.config(state="disabled")
+            texto = "No se encontraron carpetas con archivos .mkv.\n"
+        self._set_texto_archivos(texto)
 
     def mover_mkvs_a_carpeta(self):
         """Crea una carpeta 'mkv' y mueve todos los archivos .mkv a esa carpeta
@@ -1639,7 +1690,7 @@ class AnalizadorVideosApp:
             messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
             return
 
-        duraciones = [dur for _, dur, _ in self.resultados]
+        duraciones = [r[1] for r in self.resultados]
 
         # Elegir estilo disponible
         preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid',
@@ -1733,6 +1784,132 @@ class AnalizadorVideosApp:
         plt.tight_layout()
         plt.show()
 
+    def mostrar_histograma_altos(self):
+        """Muestra un histograma de la distribución de altos de fotograma."""
+        if not self.resultados:
+            messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
+            return
+
+        altos = [r[3] for r in self.resultados]
+
+        # Elegir estilo disponible
+        preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid',
+                            'seaborn', 'ggplot', 'default']
+        for s in preferred_styles:
+            if s in plt.style.available:
+                try:
+                    plt.style.use(s)
+                except (OSError, ValueError, ImportError):
+                    continue
+                break
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        fig.patch.set_facecolor('#f5f5f5')
+        ax.set_facecolor('#ffffff')
+
+        # Crear el histograma
+        n, bins, _patches = ax.hist(altos, bins='auto', color='#7289da',
+                                   edgecolor='white', alpha=0.7, rwidth=0.85)
+
+        # Personalización
+        plt.title('Distribución de Altos de Fotograma', fontsize=16, fontweight='bold', pad=20)
+        plt.xlabel('Alto (píxeles)', fontsize=12)
+        plt.ylabel('Frecuencia (Número de vídeos)', fontsize=12)
+
+        # Añadir etiquetas sobre las barras
+        for i, value in enumerate(n):
+            if value > 0:
+                ax.text(bins[i] + (bins[i+1]-bins[i])/2, value, int(value),
+                        ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plt.show()
+
+    def mostrar_grafico_ratio_vs_alto(self):
+        """Muestra un gráfico de dispersión de Ratio (MB/min) vs Alto de fotograma
+        dividido por formato."""
+        if not self.resultados:
+            messagebox.askokcancel("Sin datos", "No hay vídeos válidos para graficar.")
+            return
+
+        # Separar datos: MKV vs Otros
+        mkv_altos, mkv_ratios = [], []
+        otros_altos, otros_ratios = [], []
+
+        for r in self.resultados:
+            # r = (nombre, duracion, peso, alto)
+            nombre, dur, peso, alto = r[0], r[1], r[2], r[3]
+            if dur > 0:
+                ratio = peso / dur
+                ext = os.path.splitext(nombre)[1].lower()
+                if ext == '.mkv':
+                    mkv_altos.append(alto)
+                    mkv_ratios.append(ratio)
+                else:
+                    otros_altos.append(alto)
+                    otros_ratios.append(ratio)
+
+        if not mkv_altos and not otros_altos:
+            messagebox.askokcancel("Sin datos", "No hay vídeos con duración válida.")
+            return
+
+        # Estilo
+        preferred_styles = ['seaborn-v0_8-darkgrid', 'seaborn-darkgrid',
+                            'seaborn', 'ggplot', 'default']
+        for s in preferred_styles:
+            if s in plt.style.available:
+                try:
+                    plt.style.use(s)
+                except (OSError, ValueError, ImportError):
+                    continue
+                break
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
+        fig.patch.set_facecolor('#f5f5f5')
+
+        def configurar_subplot(ax, altos, ratios, titulo, color_map):
+            ax.set_facecolor('#ffffff')
+            if altos:
+                scatter = ax.scatter(altos, ratios, alpha=0.6, c=ratios, cmap=color_map,
+                                    edgecolors='w', s=100)
+                # Líneas de referencia
+                ax.axhline(80, color='green', linestyle='--', alpha=0.5, label='Umbral 80 MB/min')
+                ax.axhline(150, color='red', linestyle='--', alpha=0.5, label='Umbral 150 MB/min')
+
+                # Caja de estadísticas
+                media = np.mean(ratios)
+                mediana = np.median(ratios)
+                std = np.std(ratios)
+                stats_text = (f'Muestras: {len(ratios)}\n'
+                             f'Media: {media:.2f}\n'
+                             f'Mediana: {mediana:.2f}\n'
+                             f'Desv. Est: {std:.2f}\n'
+                             f'Min: {min(ratios):.2f}\n'
+                             f'Max: {max(ratios):.2f}')
+
+                ax.text(0.02, 0.95, stats_text, transform=ax.transAxes, fontsize=9,
+                        verticalalignment='top', bbox=dict(boxstyle='round',
+                        facecolor='#ecf0f1', alpha=0.8, edgecolor='#2c3e50'))
+
+                ax.set_title(titulo, fontsize=14, fontweight='bold')
+                ax.set_ylabel('Ratio (MB/min)', fontsize=10)
+                ax.legend(loc='upper right', fontsize=8)
+                return scatter
+            else:
+                ax.text(0.5, 0.5, "Sin datos para este grupo", ha='center',
+                        va='center', transform=ax.transAxes)
+                return None
+
+        configurar_subplot(ax1, mkv_altos, mkv_ratios, "Archivos MKV", 'viridis')
+        configurar_subplot(ax2, otros_altos, otros_ratios, "Otros Formatos", 'plasma')
+
+        plt.xlabel('Alto de fotograma (píxeles)', fontsize=12)
+        fig.suptitle('Relación Ratio (MB/min) vs Alto de Fotograma', fontsize=16, fontweight='bold')
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.show()
+
     def mostrar_boxplot_ratio(self):
         """Genera dos histogramas de la relación Peso/Duración (MB/min)
         uno para archivos MKV y otro para todos los demás, con cajas de estadísticas."""
@@ -1744,7 +1921,8 @@ class AnalizadorVideosApp:
         ratios_mkv = []
         ratios_otros = []
 
-        for nombre, dur, peso in self.resultados:
+        for r in self.resultados:
+            nombre, dur, peso = r[0], r[1], r[2]
             if dur and dur > 0:
                 ratio = peso / dur
                 ext = os.path.splitext(nombre)[1].lower()
@@ -1873,48 +2051,192 @@ class AnalizadorVideosApp:
     def abrir_busqueda_avanzada(self):
         """Abre una ventana para búsqueda avanzada por peso, duración, formato, etc."""
         ventana = tk.Toplevel(self.root)
-        ventana.title("Búsqueda avanzada")
-        ventana.geometry("400x300")
-        ventana.configure(bg=COLOR_FRAME)
+        ventana.title("🔍 Búsqueda Avanzada")
+        ventana.geometry("500x680")
+        ventana.resizable(False, False)
+        ventana.configure(bg=COLOR_BG)
 
-        # Duración
-        tk.Label(ventana, text="Duración mínima (min):", bg=COLOR_FRAME,
-                 fg=COLOR_LABEL).pack(pady=2)
-        entry_dur_min = tk.Entry(ventana)
-        entry_dur_min.pack()
-        tk.Label(ventana, text="Duración máxima (min):", bg=COLOR_FRAME,
-                 fg=COLOR_LABEL).pack(pady=2)
-        entry_dur_max = tk.Entry(ventana)
-        entry_dur_max.pack()
+        # Centrar la ventana en la pantalla
+        ventana.update_idletasks()
+        x = (ventana.winfo_screenwidth() // 2) - (ventana.winfo_width() // 2)
+        y = (ventana.winfo_screenheight() // 2) - (ventana.winfo_height() // 2)
+        ventana.geometry(f"+{x}+{y}")
 
-        # Peso
-        tk.Label(ventana, text="Peso mínimo (MB):", bg=COLOR_FRAME, fg=COLOR_LABEL).pack(pady=2)
-        entry_peso_min = tk.Entry(ventana)
-        entry_peso_min.pack()
-        tk.Label(ventana, text="Peso máximo (MB):", bg=COLOR_FRAME, fg=COLOR_LABEL).pack(pady=2)
-        entry_peso_max = tk.Entry(ventana)
-        entry_peso_max.pack()
+        # Marco principal con padding
+        main_frame = tk.Frame(ventana, bg=COLOR_BG)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # Formato
-        tk.Label(ventana, text="Formato (ej: mp4, avi, mkv):", bg=COLOR_FRAME,
-                 fg=COLOR_LABEL).pack(pady=2)
-        entry_formato = tk.Entry(ventana)
-        entry_formato.pack()
+        # Título descriptivo
+        titulo = tk.Label(main_frame, text="Filtros de Búsqueda",
+                         font=("Arial", 14, "bold"),
+                         bg=COLOR_BG, fg=COLOR_LABEL)
+        titulo.pack(pady=(0, 15))
+
+        # Separador visual
+        separador1 = ttk.Separator(main_frame, orient='horizontal')
+        separador1.pack(fill=tk.X, pady=(0, 15))
+
+        # ----- SECCIÓN DURACIÓN -----
+        frame_duracion = tk.LabelFrame(main_frame, text="⏱️  Duración (minutos)",
+                                       bg=COLOR_FRAME, fg=COLOR_LABEL,
+                                       font=("Arial", 10, "bold"), padx=10, pady=10)
+        frame_duracion.pack(fill=tk.X, pady=10)
+
+        # Duración mínima
+        frame_dur_min = tk.Frame(frame_duracion, bg=COLOR_FRAME)
+        frame_dur_min.pack(fill=tk.X, pady=5)
+        tk.Label(frame_dur_min, text="Mínima:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_dur_min = tk.Entry(frame_dur_min, width=20, bg=COLOR_ENTRY,
+                                fg=COLOR_TEXT, font=("Arial", 10))
+        entry_dur_min.pack(side=tk.LEFT, padx=5)
+        entry_dur_min.insert(0, "Opcional")
+        entry_dur_min.bind("<FocusIn>", lambda e: entry_dur_min.delete(
+            0, tk.END) if entry_dur_min.get() == "Opcional" else None)
+        entry_dur_min.bind("<FocusOut>", lambda e: entry_dur_min.insert(
+            0, "Opcional") if not entry_dur_min.get() else None)
+
+        # Duración máxima
+        frame_dur_max = tk.Frame(frame_duracion, bg=COLOR_FRAME)
+        frame_dur_max.pack(fill=tk.X, pady=5)
+        tk.Label(frame_dur_max, text="Máxima:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_dur_max = tk.Entry(frame_dur_max, width=20, bg=COLOR_ENTRY,
+                                fg=COLOR_TEXT, font=("Arial", 10))
+        entry_dur_max.pack(side=tk.LEFT, padx=5)
+        entry_dur_max.insert(0, "Opcional")
+        entry_dur_max.bind("<FocusIn>", lambda e: entry_dur_max.delete(
+            0, tk.END) if entry_dur_max.get() == "Opcional" else None)
+        entry_dur_max.bind("<FocusOut>", lambda e: entry_dur_max.insert(
+            0, "Opcional") if not entry_dur_max.get() else None)
+
+        # ----- SECCIÓN PESO -----
+        frame_peso = tk.LabelFrame(main_frame, text="💾  Peso (MB)",
+                                  bg=COLOR_FRAME, fg=COLOR_LABEL,
+                                  font=("Arial", 10, "bold"), padx=10, pady=10)
+        frame_peso.pack(fill=tk.X, pady=10)
+
+        # Peso mínimo
+        frame_peso_min = tk.Frame(frame_peso, bg=COLOR_FRAME)
+        frame_peso_min.pack(fill=tk.X, pady=5)
+        tk.Label(frame_peso_min, text="Mínimo:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_peso_min = tk.Entry(frame_peso_min, width=20, bg=COLOR_ENTRY,
+                                 fg=COLOR_TEXT, font=("Arial", 10))
+        entry_peso_min.pack(side=tk.LEFT, padx=5)
+        entry_peso_min.insert(0, "Opcional")
+        entry_peso_min.bind("<FocusIn>", lambda e: entry_peso_min.delete(
+            0, tk.END) if entry_peso_min.get() == "Opcional" else None)
+        entry_peso_min.bind("<FocusOut>", lambda e: entry_peso_min.insert(
+            0, "Opcional") if not entry_peso_min.get() else None)
+
+        # Peso máximo
+        frame_peso_max = tk.Frame(frame_peso, bg=COLOR_FRAME)
+        frame_peso_max.pack(fill=tk.X, pady=5)
+        tk.Label(frame_peso_max, text="Máximo:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_peso_max = tk.Entry(frame_peso_max, width=20, bg=COLOR_ENTRY,
+                                 fg=COLOR_TEXT, font=("Arial", 10))
+        entry_peso_max.pack(side=tk.LEFT, padx=5)
+        entry_peso_max.insert(0, "Opcional")
+        entry_peso_max.bind("<FocusIn>", lambda e: entry_peso_max.delete(
+            0, tk.END) if entry_peso_max.get() == "Opcional" else None)
+        entry_peso_max.bind("<FocusOut>", lambda e: entry_peso_max.insert(
+            0, "Opcional") if not entry_peso_max.get() else None)
+
+        # ----- SECCIÓN FORMATO -----
+        frame_formato = tk.LabelFrame(main_frame, text="📁  Formato",
+                                     bg=COLOR_FRAME, fg=COLOR_LABEL,
+                                     font=("Arial", 10, "bold"), padx=10, pady=10)
+        frame_formato.pack(fill=tk.X, pady=10)
+
+        tk.Label(frame_formato, text="Extensión (ej: mp4, avi, mkv):",
+                bg=COLOR_FRAME, fg=COLOR_TEXT).pack(anchor=tk.W, pady=(0, 5))
+        entry_formato = tk.Entry(frame_formato, width=30, bg=COLOR_ENTRY,
+                               fg=COLOR_TEXT, font=("Arial", 10))
+        entry_formato.pack(fill=tk.X, pady=5)
+        entry_formato.insert(0, "Opcional")
+        entry_formato.bind("<FocusIn>", lambda e: entry_formato.delete(
+            0, tk.END) if entry_formato.get() == "Opcional" else None)
+        entry_formato.bind("<FocusOut>", lambda e: entry_formato.insert(
+            0, "Opcional") if not entry_formato.get() else None)
+
+        # ----- SECCIÓN ALTO DE FOTOGRAMA -----
+        frame_alto = tk.LabelFrame(main_frame, text="📏  Alto de Fotograma (píxeles)",
+                                   bg=COLOR_FRAME, fg=COLOR_LABEL,
+                                   font=("Arial", 10, "bold"), padx=10, pady=10)
+        frame_alto.pack(fill=tk.X, pady=10)
+
+        # Alto mínimo
+        frame_alto_min = tk.Frame(frame_alto, bg=COLOR_FRAME)
+        frame_alto_min.pack(fill=tk.X, pady=5)
+        tk.Label(frame_alto_min, text="Mínimo:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_alto_min = tk.Entry(frame_alto_min, width=20, bg=COLOR_ENTRY,
+                                 fg=COLOR_TEXT, font=("Arial", 10))
+        entry_alto_min.pack(side=tk.LEFT, padx=5)
+        entry_alto_min.insert(0, "Opcional")
+        entry_alto_min.bind("<FocusIn>", lambda e: entry_alto_min.delete(
+            0, tk.END) if entry_alto_min.get() == "Opcional" else None)
+        entry_alto_min.bind("<FocusOut>", lambda e: entry_alto_min.insert(
+            0, "Opcional") if not entry_alto_min.get() else None)
+
+        # Alto máximo
+        frame_alto_max = tk.Frame(frame_alto, bg=COLOR_FRAME)
+        frame_alto_max.pack(fill=tk.X, pady=5)
+        tk.Label(frame_alto_max, text="Máximo:", bg=COLOR_FRAME, fg=COLOR_TEXT,
+                width=12).pack(side=tk.LEFT)
+        entry_alto_max = tk.Entry(frame_alto_max, width=20, bg=COLOR_ENTRY,
+                                 fg=COLOR_TEXT, font=("Arial", 10))
+        entry_alto_max.pack(side=tk.LEFT, padx=5)
+        entry_alto_max.insert(0, "Opcional")
+        entry_alto_max.bind("<FocusIn>", lambda e: entry_alto_max.delete(
+            0, tk.END) if entry_alto_max.get() == "Opcional" else None)
+        entry_alto_max.bind("<FocusOut>", lambda e: entry_alto_max.insert(
+            0, "Opcional") if not entry_alto_max.get() else None)
+
+        # Separador visual
+        separador2 = ttk.Separator(main_frame, orient='horizontal')
+        separador2.pack(fill=tk.X, pady=15)
+
+        # Marco de botones
+        frame_botones = tk.Frame(main_frame, bg=COLOR_BG)
+        frame_botones.pack(fill=tk.X, pady=(10, 0))
+
+        def obtener_valor(entry, placeholder):
+            """Obtiene el valor del Entry, ignorando placeholders y espacios en blanco"""
+            valor = entry.get().strip()
+            if valor == placeholder or not valor:
+                return None
+            return valor
 
         def buscar_avanzado():
             """ Realiza la búsqueda avanzada según los criterios introducidos """
             try:
-                dur_min = float(entry_dur_min.get()) if entry_dur_min.get() else None
-                dur_max = float(entry_dur_max.get()) if entry_dur_max.get() else None
-                peso_min = float(entry_peso_min.get()) if entry_peso_min.get() else None
-                peso_max = float(entry_peso_max.get()) if entry_peso_max.get() else None
-                formato = entry_formato.get().strip().lower()
+                dur_min_val = obtener_valor(entry_dur_min, "Opcional")
+                dur_max_val = obtener_valor(entry_dur_max, "Opcional")
+                peso_min_val = obtener_valor(entry_peso_min, "Opcional")
+                peso_max_val = obtener_valor(entry_peso_max, "Opcional")
+                alto_min_val = obtener_valor(entry_alto_min, "Opcional")
+                alto_max_val = obtener_valor(entry_alto_max, "Opcional")
+                formato_val = obtener_valor(entry_formato, "Opcional")
+
+                dur_min = float(dur_min_val) if dur_min_val else None
+                dur_max = float(dur_max_val) if dur_max_val else None
+                peso_min = float(peso_min_val) if peso_min_val else None
+                peso_max = float(peso_max_val) if peso_max_val else None
+                alto_min = int(alto_min_val) if alto_min_val else None
+                alto_max = int(alto_max_val) if alto_max_val else None
+                formato = formato_val.lower() if formato_val else None
             except ValueError:
-                messagebox.askokcancel("Error", "Introduce valores numéricos válidos.")
+                messagebox.showerror("Error", "Por favor,"
+                                     " introduce valores numéricos válidos para duración,"
+                                     " peso y alto.")
                 return
 
             encontrados = []
-            for nombre, duracion, peso in self.resultados:
+            for r in self.resultados:
+                nombre, duracion, peso, alto = r[0], r[1], r[2], r[3]
                 cumple = True
                 if dur_min is not None and duracion < dur_min:
                     cumple = False
@@ -1924,26 +2246,50 @@ class AnalizadorVideosApp:
                     cumple = False
                 if peso_max is not None and peso > peso_max:
                     cumple = False
+                if alto_min is not None and alto < alto_min:
+                    cumple = False
+                if alto_max is not None and alto > alto_max:
+                    cumple = False
                 if formato and not nombre.lower().endswith(f".{formato}"):
                     cumple = False
                 if cumple:
-                    encontrados.append((nombre, duracion, peso))
+                    encontrados.append((nombre, duracion, peso, alto))
 
-            self.texto_archivos.config(state="normal")
-            self.texto_archivos.delete(1.0, tk.END)
             if encontrados:
-                self.texto_archivos.insert('1.0', "Resultados de búsqueda avanzada:\n")
-                for nombre, dur, peso in encontrados:
-                    self.texto_archivos.insert('1.0', f"{nombre}\t{dur:.2f} min\t{peso:.2f} MB\n")
+                lineas = [f"✓ Búsqueda avanzada: {len(encontrados)} resultado(s) encontrado(s)\n\n"]
+                for nombre, dur, peso, alt in encontrados:
+                    lineas.append(f"{nombre}\t{dur:.2f} min\t{peso:.2f} MB\t{alt}p\n")
+                texto = "".join(lineas)
             else:
-                self.texto_archivos.insert('1.0',
-                                           "No se encontraron archivos con esos criterios.\n")
-            self.texto_archivos.config(state="disabled")
+                texto = "❌ No se encontraron archivos con los criterios especificados.\n"
+            self._set_texto_archivos(texto)
             ventana.destroy()
 
-        boton_buscar = tk.Button(ventana, text="Buscar", command=buscar_avanzado,
-                                bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
-        boton_buscar.pack(pady=10)
+        # Botón Buscar
+        boton_buscar = tk.Button(frame_botones, text="🔍 Buscar",
+                                command=buscar_avanzado,
+                                bg=COLOR_BUTTON_HIGHLIGHT, fg=COLOR_BG,
+                                font=("Arial", 11, "bold"),
+                                padx=20, pady=8, relief=tk.RAISED,
+                                activebackground="#ff7600", activeforeground=COLOR_BG)
+        boton_buscar.pack(side=tk.LEFT, padx=5)
+
+        # Botón Cancelar
+        boton_cancelar = tk.Button(frame_botones, text="✕ Cancelar",
+                                  command=ventana.destroy,
+                                  bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT,
+                                  font=("Arial", 11),
+                                  padx=20, pady=8, relief=tk.RAISED,
+                                  activebackground=COLOR_TAB_DISABLED,
+                                  activeforeground=COLOR_BUTTON_TEXT)
+        boton_cancelar.pack(side=tk.LEFT, padx=5)
+
+        # Información útil
+        info_label = tk.Label(main_frame,
+                             text="💡 Todos los campos son opcionales."
+                             " Rellena solo los que necesites.",
+                             bg=COLOR_BG, fg=COLOR_TEXT, font=("Arial", 9, "italic"))
+        info_label.pack(pady=(10, 0))
 
     def parar_analisis(self):
         """ Detiene el análisis de vídeos """
@@ -1960,11 +2306,12 @@ class AnalizadorVideosApp:
         self._detener_procesos_analisis(wait=False)
 
     def _procesar_video(self, ruta):
-        """Carga el clip y devuelve duración/peso (MB/min)"""
+        """Carga el clip y devuelve duración/peso (MB/min) y alto"""
         with VideoFileClip(ruta) as clip:
             duracion = clip.duration / 60
             peso = os.path.getsize(ruta) / (1024 * 1024)
-        return duracion, peso
+            alto = clip.size[1]
+        return duracion, peso, alto
 
     def _mover_archivo_a_errores(self, ruta, archivo):
         """Mueve un archivo a su carpeta 'errores' y devuelve si tuvo éxito"""
@@ -2009,6 +2356,53 @@ class AnalizadorVideosApp:
                 self._analysis_executor = None
         self._analisis_future = None
 
+    def on_closing(self):
+        """Maneja el cierre de la aplicación de forma limpia"""
+        self._parar_analisis = True
+        self._detener_procesos_analisis(wait=False)
+
+        # Limpiar variables de Tkinter para evitar errores en __del__ (Python 3.13+)
+        try:
+            if hasattr(self, 'carpeta_var'):
+                del self.carpeta_var
+        except Exception:
+            pass
+
+        # Detener el mainloop y destruir la ventana
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def _actualizar_texto_archivos(self, callback):
+        """Ejecuta operaciones sobre el Text central desde el hilo principal"""
+        def _run():
+            try:
+                if not self.root.winfo_exists():
+                    return
+                self.texto_archivos.config(state="normal")
+                callback()
+            except (tk.TclError, AttributeError):
+                pass
+            finally:
+                try:
+                    self.texto_archivos.config(state="disabled")
+                except (tk.TclError, AttributeError):
+                    pass
+        self.root.after(0, _run)
+
+    def _log_to_text(self, mensaje, tag='1.0'):
+        """Inserta líneas en la parte superior del Text de forma segura"""
+        self._actualizar_texto_archivos(lambda: self.texto_archivos.insert(tag, mensaje))
+
+    def _set_texto_archivos(self, texto):
+        """Reemplaza todo el contenido del Text central"""
+        def _update():
+            self.texto_archivos.delete(1.0, tk.END)
+            self.texto_archivos.insert('1.0', texto)
+        self._actualizar_texto_archivos(_update)
+
     def _analizar_videos_thread(self, carpeta):
         """ Función que se ejecuta en un hilo para analizar los vídeos en carpeta y subcarpetas """
         tiempo_inicio = time.time()
@@ -2029,7 +2423,9 @@ class AnalizadorVideosApp:
         resultados = []
         # Contadores para movimientos realizados durante el análisis
         moved_counts = {'optimizar': 0, 'review': 0, 'errores': 0}
-        self.texto_archivos.delete(1.0, tk.END)
+
+        self._set_texto_archivos("")
+
         self.videos_problema.clear()
         self._detener_procesos_analisis(wait=False)
         self.root.after(0, self._actualizar_botones_problemas)
@@ -2050,10 +2446,7 @@ class AnalizadorVideosApp:
             if self._parar_analisis:
                 break  # Sale del bucle si se pulsó "Parar"
             carpetita = os.path.basename(os.path.dirname(ruta))
-            self.texto_archivos.config(state="normal")
-            self.texto_archivos.insert('1.0', f"Analizando archivo: {idx}"
-                                       f"\n{carpetita} - {archivo}\n")
-            self.texto_archivos.config(state="disabled")
+            self._log_to_text(f"Analizando archivo: {idx}\n{carpetita} - {archivo}\n")
 
             if not self._analysis_executor:
                 self._analysis_executor = ThreadPoolExecutor(max_workers=1)
@@ -2062,32 +2455,21 @@ class AnalizadorVideosApp:
             skip_video = False
 
             try:
-                duracion, peso = future.result(timeout=30)
+                duracion, peso, alto = future.result(timeout=30)
                 if duracion > 0:
-                    resultados.append((archivo, duracion, peso, ruta, carpeta_actual))
+                    resultados.append((archivo, duracion, peso, ruta, carpeta_actual, alto))
             except TimeoutError:
                 self._registrar_video_problema(ruta, archivo, "Timeout >30s")
-                self.texto_archivos.config(state="normal")
-                self.texto_archivos.insert('1.0',
-                                           f"Timeout >30s en {archivo}, registro problemático.\n")
-                self.texto_archivos.config(state="disabled")
+                self._log_to_text(f"Timeout >30s en {archivo}, registro problemático.\n")
                 skip_video = True
             except CancelledError:
                 # Cuando se cancela la tarea, continuar sin marcar como problema
-                self.texto_archivos.config(state="normal")
-                self.texto_archivos.insert('1.0',
-                                           f"Análisis cancelado para {archivo}.\n")
-                self.texto_archivos.config(state="disabled")
+                self._log_to_text(f"Análisis cancelado para {archivo}.\n")
                 skip_video = True
             except (OSError, ValueError) as e:
                 parent_basename = os.path.basename(os.path.dirname(ruta)).lower()
                 err_msg = str(e)
-                self.texto_archivos.config(state="normal")
-                try:
-                    self.texto_archivos.insert('1.0', err_msg + "\n")
-                except tk.TclError:
-                    pass
-                self.texto_archivos.config(state="disabled")
+                self._log_to_text(err_msg + "\n")
                 self._registrar_video_problema(ruta, archivo, err_msg)
                 if parent_basename == "errores":
                     print(f"Archivo ya en 'errores', no se mueve: {ruta}")
@@ -2102,13 +2484,13 @@ class AnalizadorVideosApp:
             if idx % 5 == 0:
                 self.root.after(0, self.frame3.update_idletasks)
 
-        self.boton_parar["state"] = "disabled"
+        self.root.after(0, lambda: self.boton_parar.config(state="disabled"))
         self._detener_procesos_analisis(wait=True)
         self.root.after(0, self._actualizar_botones_problemas)
 
         # --- Mover archivos que cumplen la condición a la carpeta
         # "review", "xcut" o "optimizar" ---
-        for nombre, duracion, peso, ruta, carpeta_actual in resultados:
+        for nombre, duracion, peso, ruta, carpeta_actual, *_extra in resultados:
             # Evita crear subcarpetas dentro de sí mismas (review/xcut/optimizar)
             basename_actual = os.path.basename(carpeta_actual).lower()
             # calcular ratio MB/min de forma segura
@@ -2156,7 +2538,8 @@ class AnalizadorVideosApp:
         # Calcular peso medio por minuto por extensión usando los resultados válidos
         peso_sum_by_ext = {}
         dur_sum_by_ext = {}
-        for nombre, dur, peso, *_ in resultados:
+
+        for nombre, dur, peso, ruta, carpeta, alto in resultados:
             ext = os.path.splitext(nombre)[1].lower() or 'sin_ext'
             peso_sum_by_ext[ext] = peso_sum_by_ext.get(ext, 0.0) + peso
             dur_sum_by_ext[ext] = dur_sum_by_ext.get(ext, 0.0) + dur
@@ -2168,6 +2551,8 @@ class AnalizadorVideosApp:
             avg = (total_peso / total_dur) if total_dur > 0 else 0.0
             avg_by_ext[ext] = avg
 
+        resumen_por_alto = self.generar_resumen_por_alto(resultados)
+
         # Preparar texto del resumen
         resumen_lines = []
         resumen_lines.append("\nResumen del análisis:\n")
@@ -2176,6 +2561,13 @@ class AnalizadorVideosApp:
         # Calcular rating
         estrellas_rating, pct_bien, bien_opt, mal_opt, categoria_rating = (
             calcular_rating_optimizacion(resultados))
+        rating_info = {
+            'estrellas': estrellas_rating,
+            'pct_bien': pct_bien,
+            'bien_optimizados': bien_opt,
+            'mal_optimizados': mal_opt,
+            'categoria': categoria_rating
+        }
         estrella_llena = "★"
         estrella_vacia = "☆"
         representacion_estrellas = (
@@ -2195,6 +2587,14 @@ class AnalizadorVideosApp:
         resumen_lines.append("\nPeso medio por minuto por extensión:\n")
         for ext, avg in sorted(avg_by_ext.items(), key=lambda x: x[0]):
             resumen_lines.append(f"- {ext}: {avg:.2f} MB/min\n")
+
+        resumen_lines.append("\nPeso medio por minuto por alto de fotograma:\n")
+        for alto in sorted(resumen_por_alto.keys()):
+            datos = resumen_por_alto[alto]
+            resumen_lines.append(
+                f"- {alto}p: {datos['promedio']:.2f} MB/min ({datos['conteo']} archivos)\n"
+            )
+
         resumen_lines.append("\nArchivos movidos durante el análisis:\n")
         for k, v in moved_counts.items():
             resumen_lines.append(f"- {v} archivos -> {k}\n")
@@ -2214,6 +2614,7 @@ class AnalizadorVideosApp:
 
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
         self.root.after(0, destruir_barra)
+        self.root.after(0, lambda: self.boton_busqueda_avanzada.config(state="normal"))
 
         # Registrar el análisis en el historial con estadísticas por formato
         # Usar len(resultados) que es la cantidad de videos procesados correctamente
@@ -2221,11 +2622,13 @@ class AnalizadorVideosApp:
             carpeta=self.carpeta,
             counts_by_ext=counts_by_ext,
             avg_by_ext=avg_by_ext,
-            total_archivos=len(resultados)
+            total_archivos=len(resultados),
+            rating=rating_info
         )
 
-        # Actualiza resultados para mostrar solo nombre, duracion, peso
-        self.resultados = [(nombre, duracion, peso) for nombre, duracion, peso, _, _ in resultados]
+        # Actualiza resultados para mostrar solo nombre, duracion, peso, alto
+        self.resultados = [(nombre, duracion, peso, alto) for nombre, duracion,
+                           peso, _, _, alto in resultados]
 
         tiempo_fin = time.time()  # <-- Añade esto justo antes de actualizar_interfaz
         tiempo_total = tiempo_fin - tiempo_inicio
@@ -2234,6 +2637,9 @@ class AnalizadorVideosApp:
             if not self.resultados:
                 self.label_resultado.config(text="No se encontraron vídeos válidos.")
                 self.boton_grafico["state"] = "disabled"
+                self.boton_histograma["state"] = "disabled"
+                self.boton_histograma_altos["state"] = "disabled"
+                self.boton_ratio_alto["state"] = "disabled"
                 self.boton_visual["state"] = "disabled"
                 self.boton["state"] = "normal"
                 return
@@ -2259,6 +2665,8 @@ class AnalizadorVideosApp:
             self.label_resultado.config(text=resultados_text)
             self.boton_grafico["state"] = "normal"
             self.boton_histograma["state"] = "normal"
+            self.boton_histograma_altos["state"] = "normal"
+            self.boton_ratio_alto["state"] = "normal"
             self.boton["state"] = "normal"
             try:
                 self.boton_analizar["state"] = "normal"
@@ -2268,7 +2676,7 @@ class AnalizadorVideosApp:
             # Habilitar/deshabilitar botón Boxplot según número de ratios válidos
             # Condición: necesitamos al menos 3 vídeos con duración > 0
             # para que el boxplot tenga sentido
-            valid_ratios_count = sum(1 for _, dur, _ in self.resultados if dur and dur > 0)
+            valid_ratios_count = sum(1 for r in self.resultados if r[1] and r[1] > 0)
             if valid_ratios_count >= 3:
                 self.boton_boxplot["state"] = "normal"
             else:
@@ -2287,13 +2695,7 @@ class AnalizadorVideosApp:
                 ToolTip(self.boton_visual, "")
 
             # Mostrar solo el resumen en la pestaña Resultados
-            try:
-                self.texto_archivos.config(state="normal")
-                self.texto_archivos.delete(1.0, tk.END)
-                self.texto_archivos.insert('1.0', resumen_text)
-                self.texto_archivos.config(state="disabled")
-            except tk.TclError:
-                pass
+            self._set_texto_archivos(resumen_text)
 
         self.root.after(0, actualizar_interfaz)
 
@@ -2301,9 +2703,32 @@ class AnalizadorVideosApp:
         try:
             if self.progress:
                 self.progress.config(value=valor)
-        except tk.TclError:
-            pass  # La barra ya no existe, ignora el error
-        self.label_porcentaje.config(text=f"{porcentaje}%")
+            self.label_porcentaje.config(text=f"{porcentaje}%")
+        except (tk.TclError, AttributeError):
+            pass  # La barra o el label ya no existen, ignora el error
+
+    def generar_resumen_por_alto(self, resultados=None):
+        """Devuelve estadísticas agregadas (conteo/promedio) por altura"""
+        resultados = resultados if resultados is not None else self.resultados
+        resumen = {}
+        for registro in resultados:
+            if len(registro) < 4:
+                continue
+            alto = registro[-1]
+            duracion = registro[1]
+            peso = registro[2]
+            datos = resumen.setdefault(alto, {
+                'peso_total': 0.0,
+                'dur_total': 0.0,
+                'conteo': 0
+            })
+            datos['peso_total'] += peso
+            datos['dur_total'] += duracion
+            datos['conteo'] += 1
+        for datos in resumen.values():
+            dur_total = datos['dur_total']
+            datos['promedio'] = (datos['peso_total'] / dur_total) if dur_total > 0 else 0.0
+        return resumen
 
     def _registrar_video_problema(self, ruta, archivo, motivo):
         """Registra un video como problemático para mostrar/mover luego"""
@@ -2369,12 +2794,7 @@ class AnalizadorVideosApp:
         mensaje = f"Movidos {movidos} vídeos a errores." if movidos else "No se movió ningún vídeo."
         if ya_en_errores:
             mensaje += f" {ya_en_errores} ya estaban en 'errores'."
-        try:
-            self.texto_archivos.config(state="normal")
-            self.texto_archivos.insert('1.0', mensaje + "\n")
-            self.texto_archivos.config(state="disabled")
-        except tk.TclError:
-            pass
+        self._log_to_text(mensaje + "\n")
         messagebox.showinfo("Videos problemáticos", mensaje)
 
     def mostrar_historial_movimientos(self):
@@ -2388,7 +2808,7 @@ class AnalizadorVideosApp:
 
         ventana = tk.Toplevel(self.root)
         ventana.title("Historial de Análisis")
-        ventana.geometry("950x600")
+        ventana.geometry("1000x800")
         ventana.configure(bg=COLOR_BG)
 
         # Frame superior con información
@@ -2421,12 +2841,12 @@ class AnalizadorVideosApp:
             veces = analisis.get('veces', 1)
 
             # Encabezado del análisis
-            linea_encabezado = f"\n{'='*100}\n"
+            linea_encabezado = f"\n\n\n{'='*120}\n"
             veces_str = f" (Repetido {veces} veces)" if veces > 1 else ""
             linea_encabezado += (f"Fecha: {timestamp} | Carpeta: {carpeta} | "
                                  f"Total: {total_archivos} "
             f"archivos{veces_str}\n")
-            linea_encabezado += f"{'='*100}\n"
+            linea_encabezado += f"{'='*120}\n"
             texto.insert(tk.END, linea_encabezado)
 
             # Estadísticas por formato
@@ -2441,6 +2861,18 @@ class AnalizadorVideosApp:
                     texto.insert(tk.END, linea)
             else:
                 texto.insert(tk.END, "Sin estadísticas disponibles.\n")
+
+            rating = analisis.get('rating')
+            if rating:
+                linea_rating = (
+                    f"Rating: {rating.get('estrellas', 0)}★ ({rating.get('categoria', 'N/A')}) | "
+                    f"{rating.get('pct_bien', 0):.1f}% bien | "
+                    f"{rating.get('bien_optimizados', 0)} bien / {rating.get('mal_optimizados',
+                    0)} mal\n"
+                )
+            else:
+                linea_rating = "Rating: no disponible\n"
+            texto.insert(tk.END, linea_rating)
 
         texto.config(state="disabled")
 
@@ -2515,19 +2947,24 @@ class AnalizadorVideosApp:
             self._habilitar_botones_historial()
 
     def _habilitar_botones_historial(self):
-        """Habilita los botones de historial si hay datos en el historial"""
-        if self.gestor_historial.historial:
-            self.boton_mostrar_historial["state"] = "normal"
-            self.boton_deshacer["state"] = "normal"
-            self.boton_exportar_csv["state"] = "normal"
-            self.boton_exportar_json["state"] = "normal"
-            self.boton_limpiar_historial["state"] = "normal"
-        else:
-            self.boton_mostrar_historial["state"] = "disabled"
-            self.boton_deshacer["state"] = "disabled"
-            self.boton_exportar_csv["state"] = "disabled"
-            self.boton_exportar_json["state"] = "disabled"
-            self.boton_limpiar_historial["state"] = "disabled"
+        """Habilita los botones de historial si hay datos en el historial (seguro para hilos)"""
+        def _update():
+            try:
+                if self.gestor_historial.historial:
+                    self.boton_mostrar_historial["state"] = "normal"
+                    self.boton_deshacer["state"] = "normal"
+                    self.boton_exportar_csv["state"] = "normal"
+                    self.boton_exportar_json["state"] = "normal"
+                    self.boton_limpiar_historial["state"] = "normal"
+                else:
+                    self.boton_mostrar_historial["state"] = "disabled"
+                    self.boton_deshacer["state"] = "disabled"
+                    self.boton_exportar_csv["state"] = "disabled"
+                    self.boton_exportar_json["state"] = "disabled"
+                    self.boton_limpiar_historial["state"] = "disabled"
+            except (tk.TclError, AttributeError):
+                pass
+        self.root.after(0, _update)
 
     def buscar_avis_repetidos(self):
         """Busca archivos .avi que tengan el mismo nombre base pero con diferente extensión
@@ -2612,7 +3049,7 @@ class AnalizadorVideosApp:
 if __name__ == "__main__":
     root = tk.Tk()
     # Establecer tamaño fijo de la ventana
-    root.geometry("1080x640")
+    root.geometry("1080x680")
     root.resizable(False, False)  # Deshabilitar redimensionamiento
     app = AnalizadorVideosApp(root)
     root.mainloop()
