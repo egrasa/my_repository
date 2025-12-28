@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 #from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, CancelledError
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import matplotlib.pyplot as plt
 from moviepy import VideoFileClip
@@ -608,6 +609,107 @@ class ToolTip:
         if tw:
             tw.destroy()
 
+
+class GestorAnalisisHistorico:
+    """Gestiona análisis históricos por carpeta con comentarios y comparativas"""
+    def __init__(self, archivo_datos="analisis_carpetas.json"):
+        self.archivo_datos = archivo_datos
+        self.datos = {}
+        self.cargar_datos()
+
+    def cargar_datos(self):
+        """Carga los datos históricos de carpetas"""
+        if os.path.exists(self.archivo_datos):
+            try:
+                with open(self.archivo_datos, 'r', encoding='utf-8') as f:
+                    self.datos = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                self.datos = {}
+        else:
+            self.datos = {}
+
+    def guardar_datos(self):
+        """Guarda los datos históricos"""
+        try:
+            with open(self.archivo_datos, 'w', encoding='utf-8') as f:
+                json.dump(self.datos, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            print(f"Error guardando datos: {e}")
+
+    def registrar_analisis(self, carpeta, resultados):
+        """Registra un análisis de una carpeta"""
+        clave = os.path.abspath(carpeta)
+
+        # Calcular estadísticas
+        peso_total = sum(r[2] for r in resultados)
+        duracion_total = sum(r[1] for r in resultados)
+        altos = [r[3] for r in resultados]
+
+        analisis_actual = {
+            'timestamp': datetime.now().isoformat(),
+            'total_archivos': len(resultados),
+            'peso_total_mb': round(peso_total, 2),
+            'duracion_total_min': round(duracion_total, 2),
+            'peso_promedio_mb': round(peso_total / len(resultados), 2) if resultados else 0,
+            'duracion_promedio_min': round(duracion_total / len(resultados),
+                                           2) if resultados else 0,
+            'alto_promedio': round(sum(altos) / len(altos), 0) if altos else 0,
+            'altos_unicos': sorted(list(set(altos))),
+        }
+
+        if clave not in self.datos:
+            self.datos[clave] = {
+                'carpeta': carpeta,
+                'comentarios': [],
+                'analisis': []
+            }
+
+        self.datos[clave]['analisis'].append(analisis_actual)
+        self.guardar_datos()
+
+    def obtener_analisis_anterior(self, carpeta):
+        """Obtiene el análisis anterior de una carpeta"""
+        clave = os.path.abspath(carpeta)
+        if clave in self.datos and len(self.datos[clave]['analisis']) > 0:
+            return self.datos[clave]['analisis'][-1]
+        return None
+
+    def obtener_todos_analisis(self, carpeta):
+        """Obtiene todos los análisis de una carpeta"""
+        clave = os.path.abspath(carpeta)
+        if clave in self.datos:
+            return self.datos[clave]['analisis']
+        return []
+
+    def carpeta_analizada_antes(self, carpeta):
+        """Verifica si una carpeta ha sido analizada antes"""
+        clave = os.path.abspath(carpeta)
+        return clave in self.datos and len(self.datos[clave]['analisis']) > 0
+
+    def anadir_comentario(self, carpeta, comentario):
+        """Añade un comentario a una carpeta"""
+        clave = os.path.abspath(carpeta)
+        if clave not in self.datos:
+            self.datos[clave] = {
+                'carpeta': carpeta,
+                'comentarios': [],
+                'analisis': []
+            }
+
+        self.datos[clave]['comentarios'].append({
+            'timestamp': datetime.now().isoformat(),
+            'texto': comentario
+        })
+        self.guardar_datos()
+
+    def obtener_comentarios(self, carpeta):
+        """Obtiene los comentarios de una carpeta"""
+        clave = os.path.abspath(carpeta)
+        if clave in self.datos:
+            return self.datos[clave]['comentarios']
+        return []
+
+
 class AnalizadorVideosApp:
     """ Aplicación para analizar vídeos en una carpeta """
     def __init__(self, master):
@@ -623,6 +725,7 @@ class AnalizadorVideosApp:
         self._previsualizacion_hecha = False  # Control para saber si ya se hizo previsualización
         self.gestor_historial = GestorHistorialAnalisis(
             callback_actualizar=self._habilitar_botones_historial)
+        self.gestor_analisis_historico = GestorAnalisisHistorico()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.configure(bg=COLOR_BG)
@@ -952,6 +1055,13 @@ class AnalizadorVideosApp:
                             bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
         self.boton_busqueda_avanzada.pack(side="right", padx=5)
 
+        # Botón para ver análisis anterior y comentarios
+        self.boton_analisis_anterior = tk.Button(extras_frame, text="📊 Análisis anterior",
+                            command=self.mostrar_analisis_anterior, state="disabled",
+                            bg=COLOR_BUTTON, fg=COLOR_BUTTON_TEXT)
+        self.boton_analisis_anterior.pack(side="right", padx=5)
+        ToolTip(self.boton_analisis_anterior, "Ver análisis anterior y comentarios de esta carpeta")
+
         # Boton para ver errores
         self.boton_print_errores = tk.Button(extras_frame, text="Ver Errores", borderwidth=0,
                              command=self.ver_lista_errores, state="disabled",
@@ -1091,6 +1201,7 @@ class AnalizadorVideosApp:
             self.boton_avi["state"] = "normal"
             self.boton_mostrar_problemas["state"] = "disabled"
             self.boton_mover_problemas["state"] = "disabled"
+            self.boton_busqueda_avanzada["state"] = "disabled"
             # enable MOV-specific buttons when a folder is selected
             try:
                 self.boton_mov["state"] = "normal"
@@ -1107,6 +1218,10 @@ class AnalizadorVideosApp:
                 self.boton_ver_vacias_general["state"] = "normal"
             except AttributeError:
                 pass
+
+            # Habilitar botón de análisis anterior si la carpeta fue analizada
+            self._actualizar_boton_analisis_anterior()
+
             self.boton.configure(bg=COLOR_BUTTON)
             self._actualizar_tabs_formatos({})
         else:
@@ -1121,6 +1236,8 @@ class AnalizadorVideosApp:
             self._actualizar_tabs_formatos({})
             self.boton_mostrar_problemas["state"] = "disabled"
             self.boton_mover_problemas["state"] = "disabled"
+            self.boton_busqueda_avanzada["state"] = "disabled"
+            self.boton_analisis_anterior["state"] = "disabled"
 
     def analizar_o_previsualizar(self):
         """Ejecuta previsualización primero, luego análisis completo"""
@@ -1167,6 +1284,9 @@ class AnalizadorVideosApp:
         if not self.carpeta:
             messagebox.askokcancel("Aviso", "Primero selecciona una carpeta.")
             return
+
+        # Mostrar aviso si la carpeta fue analizada antes
+        self._mostrar_aviso_analisis_previo()
 
         # Buscar y mover archivos de la carpeta xcut a la raíz
         xcut_dir = os.path.join(self.carpeta, "xcut")
@@ -2048,6 +2168,177 @@ class AnalizadorVideosApp:
         plt.tight_layout()
         plt.show()
 
+    def mostrar_analisis_anterior(self):
+        """Muestra el análisis anterior, comentarios y gráfico comparativo"""
+        if not self.carpeta:
+            messagebox.askokcancel("Advertencia", "Selecciona una carpeta primero.")
+            return
+
+        analisis_anterior = self.gestor_analisis_historico.obtener_analisis_anterior(self.carpeta)
+        if not analisis_anterior:
+            messagebox.askokcancel("Sin datos", "No hay análisis anterior para esta carpeta.")
+            return
+
+        # Crear ventana de diálogo
+        ventana = tk.Toplevel(self.root)
+        ventana.title("📊 Análisis Anterior y Comparativa")
+        ventana.geometry("800x700")
+        ventana.resizable(True, True)
+        ventana.configure(bg=COLOR_BG)
+
+        # Frame principal con tabs
+        notebook = ttk.Notebook(ventana, style='TNotebook')
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # TAB 1: Análisis Anterior
+        frame_anterior = tk.Frame(notebook, bg=COLOR_FRAME)
+        notebook.add(frame_anterior, text="📈 Análisis Anterior")
+
+        texto_anterior = tk.Text(frame_anterior, height=25, width=95, fg=COLOR_TEXT,
+                                bg=COLOR_BG, state="normal", wrap="word", relief="flat")
+        texto_anterior.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+        texto_anterior.config(font=("Consolas", 9))
+
+        # Mostrar datos del análisis anterior
+        fecha_anterior = analisis_anterior['timestamp']
+        contenido_anterior = f"""
+ANÁLISIS ANTERIOR: {fecha_anterior}
+{'='*80}
+
+Total de archivos:     {analisis_anterior['total_archivos']}
+Peso total:            {analisis_anterior['peso_total_mb']:.2f} MB
+Duración total:        {analisis_anterior['duracion_total_min']:.2f} minutos
+Peso promedio:         {analisis_anterior['peso_promedio_mb']:.2f} MB
+Duración promedio:     {analisis_anterior['duracion_promedio_min']:.2f} minutos
+Alto promedio:         {int(analisis_anterior['alto_promedio'])}p
+Altos únicos:          {', '.join(str(a) + 'p' for a in analisis_anterior['altos_unicos'])}
+"""
+        texto_anterior.insert('1.0', contenido_anterior)
+        texto_anterior.config(state="disabled")
+
+        # TAB 2: Comentarios
+        frame_comentarios = tk.Frame(notebook, bg=COLOR_FRAME)
+        notebook.add(frame_comentarios, text="💬 Comentarios")
+
+        # Área de comentarios anteriores
+        tk.Label(frame_comentarios, text="Comentarios previos:", bg=COLOR_FRAME,
+                fg=COLOR_LABEL, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        texto_comentarios = tk.Text(frame_comentarios, height=12, width=95, fg=COLOR_TEXT,
+                                   bg=COLOR_BG, state="normal", wrap="word", relief="flat")
+        texto_comentarios.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        texto_comentarios.config(font=("Consolas", 9))
+
+        comentarios = self.gestor_analisis_historico.obtener_comentarios(self.carpeta)
+        if comentarios:
+            for com in comentarios:
+                fecha_com = com['timestamp']
+                texto_comentarios.insert(tk.END, f"[{fecha_com}]\n{com['texto']}\n\n")
+        else:
+            texto_comentarios.insert(tk.END, "No hay comentarios previos.")
+        texto_comentarios.config(state="disabled")
+
+        # Área para nuevo comentario
+        tk.Label(frame_comentarios, text="Nuevo comentario:", bg=COLOR_FRAME,
+                fg=COLOR_LABEL, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        frame_nuevo_com = tk.Frame(frame_comentarios, bg=COLOR_FRAME)
+        frame_nuevo_com.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        entry_comentario = tk.Text(frame_nuevo_com, height=4, width=95, fg=COLOR_TEXT,
+                                   bg=COLOR_ENTRY, relief="flat", font=("Consolas", 9))
+        entry_comentario.pack(fill=tk.BOTH, expand=True)
+
+        def guardar_comentario():
+            comentario = entry_comentario.get('1.0', tk.END).strip()
+            if comentario:
+                self.gestor_analisis_historico.anadir_comentario(self.carpeta, comentario)
+                messagebox.showinfo("Éxito", "Comentario guardado correctamente.")
+                entry_comentario.delete('1.0', tk.END)
+            else:
+                messagebox.showwarning("Advertencia", "El comentario no puede estar vacío.")
+
+        boton_guardar = tk.Button(frame_nuevo_com, text="💾 Guardar comentario",
+                                 command=guardar_comentario, bg=COLOR_BUTTON_HIGHLIGHT,
+                                 fg=COLOR_BG, font=("Arial", 10, "bold"), padx=10, pady=5)
+        boton_guardar.pack(pady=5)
+
+        # TAB 3: Gráfico Comparativo
+        frame_grafico = tk.Frame(notebook, bg=COLOR_FRAME)
+        notebook.add(frame_grafico, text="📊 Comparativa")
+
+        self._mostrar_grafico_comparativo_interno(frame_grafico, analisis_anterior)
+
+    def _mostrar_grafico_comparativo_interno(self, parent_frame, analisis_anterior):
+        """Muestra gráfico comparativo entre análisis anterior y actual"""
+        if not self.resultados:
+            label = tk.Label(parent_frame, text="No hay datos actuales para comparar.",
+                           bg=COLOR_FRAME, fg=COLOR_TEXT)
+            label.pack(pady=20)
+            return
+
+        # Calcular datos actuales
+        peso_total_actual = sum(r[2] for r in self.resultados)
+        duracion_total_actual = sum(r[1] for r in self.resultados)
+        altos_actual = [r[3] for r in self.resultados]
+
+        # Preparar datos para gráfico
+        categorias = ['Total Archivos', 'Peso Total (MB)', 'Duración (min)', 'Alto Promedio']
+        anterior = [
+            analisis_anterior['total_archivos'],
+            analisis_anterior['peso_total_mb'],
+            analisis_anterior['duracion_total_min'],
+            analisis_anterior['alto_promedio']
+        ]
+        actual = [
+            len(self.resultados),
+            peso_total_actual,
+            duracion_total_actual,
+            sum(altos_actual) / len(altos_actual) if altos_actual else 0
+        ]
+
+        # Crear gráfico
+        fig, ax = plt.subplots(figsize=(10, 6))
+        fig.patch.set_facecolor(COLOR_BG)
+        ax.set_facecolor(COLOR_FRAME)
+
+        x = np.arange(len(categorias))
+        ancho = 0.35
+
+        barras1 = ax.bar(x - ancho/2, anterior, ancho, label='Anterior',
+                        color='#3498db', alpha=0.8, edgecolor='white', linewidth=1.5)
+        barras2 = ax.bar(x + ancho/2, actual, ancho, label='Actual',
+                        color='#2ecc71', alpha=0.8, edgecolor='white', linewidth=1.5)
+
+        # Añadir valores en las barras
+        for barras in [barras1, barras2]:
+            for barra in barras:
+                altura = barra.get_height()
+                ax.text(barra.get_x() + barra.get_width()/2., altura,
+                       f'{altura:.1f}', ha='center', va='bottom',
+                       fontsize=9, color=COLOR_TEXT, fontweight='bold')
+
+        ax.set_ylabel('Valor', fontsize=11, color=COLOR_TEXT, fontweight='bold')
+        ax.set_title('Comparativa: Análisis Anterior vs Actual', fontsize=13,
+                    color=COLOR_TEXT, fontweight='bold', pad=15)
+        ax.set_xticks(x)
+        ax.set_xticklabels(categorias, fontsize=10, color=COLOR_TEXT)
+        ax.legend(fontsize=10, facecolor=COLOR_FRAME, edgecolor=COLOR_TEXT)
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
+        ax.tick_params(colors=COLOR_TEXT)
+
+        # Colores de spines
+        for spine in ax.spines.values():
+            spine.set_color(COLOR_TEXT)
+            spine.set_alpha(0.3)
+
+        plt.tight_layout()
+
+        # Insertar gráfico en tkinter
+        canvas = FigureCanvasTkAgg(fig, master=parent_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
     def abrir_busqueda_avanzada(self):
         """Abre una ventana para búsqueda avanzada por peso, duración, formato, etc."""
         ventana = tk.Toplevel(self.root)
@@ -2290,6 +2581,33 @@ class AnalizadorVideosApp:
                              " Rellena solo los que necesites.",
                              bg=COLOR_BG, fg=COLOR_TEXT, font=("Arial", 9, "italic"))
         info_label.pack(pady=(10, 0))
+
+    def _actualizar_boton_analisis_anterior(self):
+        """Habilita el botón de análisis anterior si la carpeta ya fue analizada"""
+        if self.carpeta and self.gestor_analisis_historico.carpeta_analizada_antes(self.carpeta):
+            self.boton_analisis_anterior.config(state="normal")
+        else:
+            self.boton_analisis_anterior.config(state="disabled")
+
+    def _mostrar_aviso_analisis_previo(self):
+        """Muestra un aviso si la carpeta ya fue analizada antes"""
+        if not self.carpeta:
+            return
+
+        if self.gestor_analisis_historico.carpeta_analizada_antes(self.carpeta):
+            analisis_anterior = self.gestor_analisis_historico.obtener_analisis_anterior(
+                self.carpeta)
+            fecha_anterior = analisis_anterior['timestamp']
+            comentarios = self.gestor_analisis_historico.obtener_comentarios(self.carpeta)
+
+            mensaje = f"📊 Esta carpeta fue analizada anteriormente el {fecha_anterior}"
+            if comentarios:
+                mensaje += f"\n💬 Hay {len(comentarios)} comentario(s) guardado(s)"
+
+            messagebox.showinfo("Carpeta analizada anteriormente", mensaje)
+
+            # Habilitar el botón de análisis anterior
+            self.boton_analisis_anterior.config(state="normal")
 
     def parar_analisis(self):
         """ Detiene el análisis de vídeos """
@@ -2615,6 +2933,7 @@ class AnalizadorVideosApp:
         self.root.after(0, lambda: self._actualizar_progreso(total, 100))
         self.root.after(0, destruir_barra)
         self.root.after(0, lambda: self.boton_busqueda_avanzada.config(state="normal"))
+        self.root.after(0, lambda: self._actualizar_boton_analisis_anterior())
 
         # Registrar el análisis en el historial con estadísticas por formato
         # Usar len(resultados) que es la cantidad de videos procesados correctamente
@@ -2629,6 +2948,9 @@ class AnalizadorVideosApp:
         # Actualiza resultados para mostrar solo nombre, duracion, peso, alto
         self.resultados = [(nombre, duracion, peso, alto) for nombre, duracion,
                            peso, _, _, alto in resultados]
+
+        # Registrar análisis en historial
+        self.gestor_analisis_historico.registrar_analisis(self.carpeta, self.resultados)
 
         tiempo_fin = time.time()  # <-- Añade esto justo antes de actualizar_interfaz
         tiempo_total = tiempo_fin - tiempo_inicio
