@@ -2,8 +2,9 @@
 
 import os
 import csv
+import random
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import tkinter.font as tkfont
 
 # Constants
@@ -18,8 +19,8 @@ DEFAULT_BOTTOM_ITEMS = [
     ('belt', 300, 'special'),
 ]
 CSV_COLUMNS = ['nombre', 'precio', 'categoria', 'tipo']
-WINDOW_WIDTH = 400
-WINDOW_HEIGHT = 380
+WINDOW_WIDTH = 540
+WINDOW_HEIGHT = 400
 FONT_LABEL = ('Segoe UI', 10)
 FONT_INFO = ('Segoe UI', 12, 'bold')
 FONT_TOTAL = ('Segoe UI', 36, 'bold')
@@ -159,6 +160,21 @@ def main():
     separator2.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
     separator2.grid_propagate(False)
 
+    # Button at right of selectors
+    def show_selection():
+        # Select random items from both top and bottom
+        if tops and bottoms:
+            random_top = random.choice(tops)
+            random_bottom = random.choice(bottoms)
+            top_var.set(random_top['nombre'])
+            bottom_var.set(random_bottom['nombre'])
+            update_display()
+
+    btn = ttk.Button(sel_frame, text='Random \n Outfit', command=show_selection)
+    btn.grid(row=0, column=3, rowspan=2, sticky=tk.NS, padx=(12, 0), pady=6)
+    # Checkbox to show/hide prices will be created after update_display() is defined
+    show_prices_var = tk.BooleanVar(value=False)
+
     # prominent total area at the top, centered
     total_frame = tk.Frame(frm, bg=root_bg)
     total_frame.grid(row=0, column=0, columnspan=2, pady=(4,12))
@@ -193,6 +209,11 @@ def main():
                              fg='#666666')
     details_label.grid(row=4, column=0, sticky=tk.W, pady=(6,0))
 
+    # Label to show maximum possible price
+    bold_font = tkfont.Font(family='Segoe UI', size=9, weight='bold')
+    max_price_label = tk.Label(frm, text='', bg=root_bg, font=bold_font, fg='#333333')
+    max_price_label.grid(row=5, column=0, sticky=tk.W, pady=(4,0))
+
 
     def build_lookup(collection):
         """Build a dictionary for O(1) item lookup by nombre."""
@@ -219,21 +240,25 @@ def main():
         parts = []
 
         # Update labels and calculate total with minimum pricing for tipo-2 items
+        original_top_price = 0
+        original_bot_price = 0
         top_price = 0
         if top_item:
-            top_price = top_item['precio']
+            original_top_price = top_item['precio']
+            top_price = original_top_price
             parts.append(
                 f"Top: {top_item['nombre']} ({top_item['categoria']}) - {top_item['precio']}")
-            top_info_label.config(text=f"{top_item['precio']}")
+            top_info_label.config(text=f"{top_item['precio']}" if show_prices_var.get() else '')
         else:
             top_info_label.config(text='')
 
         bot_price = 0
         if bot_item:
-            bot_price = bot_item['precio']
+            original_bot_price = bot_item['precio']
+            bot_price = original_bot_price
             parts.append(
                 f"Bottom: {bot_item['nombre']} ({bot_item['categoria']}) - {bot_item['precio']}")
-            bottom_info_label.config(text=f"{bot_item['precio']}")
+            bottom_info_label.config(text=f"{bot_item['precio']}" if show_prices_var.get() else '')
         else:
             bottom_info_label.config(text='')
 
@@ -282,8 +307,8 @@ def main():
             top_dup = ''
             bottom_dup = ''
 
-        top_dup_label.config(text=top_dup)
-        bottom_dup_label.config(text=bottom_dup)
+        top_dup_label.config(text=top_dup if show_prices_var.get() else '')
+        bottom_dup_label.config(text=bottom_dup if show_prices_var.get() else '')
 
         # Update price display with appropriate color
         price_display.config(text=str(int(total)), fg=color_for_total(total))
@@ -309,41 +334,60 @@ def main():
         top_name_label.config(text=display_top)
         bottom_name_label.config(text=display_bottom)
 
-        # Update details with explanation of price reductions
-        max_possible = (
-            top_item['precio'] if top_item else 0) + (bot_item['precio'] if bot_item else 0)
+        # Update details with explanation of price alternatives
+        # Calculate what the maximum could be considering tipo-2 alternatives
+        max_possible_top = original_top_price if top_item else 0
+        max_possible_bot = original_bot_price if bot_item else 0
+
+        # If top is tipo 2, check if it could be used for bottom at different price
+        if top_item and top_item.get('tipo') == 2:
+            bot_ver = bottoms_dict.get(top_item['nombre'])
+            if bot_ver:
+                max_possible_bot = max(max_possible_bot, bot_ver['precio'])
+
+        # If bottom is tipo 2, check if it could be used for top at different price
+        if bot_item and bot_item.get('tipo') == 2:
+            top_ver = tops_dict.get(bot_item['nombre'])
+            if top_ver:
+                max_possible_top = max(max_possible_top, top_ver['precio'])
+
+        max_possible = max_possible_top + max_possible_bot
         explanation = ''
 
         if max_possible > total:
-            # There's a price reduction due to tipo-2 items
+            # Check if top item could replace bottom (exists in bottom CSV)
             if top_item and top_item.get('tipo') == 2:
-                bottom_version = bottoms_dict.get(top_item['nombre'])
-                if bottom_version and bot_item and bottom_version['precio'] < bot_item['precio']:
-                    explanation = (f"{top_item['nombre']} covers {bot_item['nombre']},"
-                                   " using lower price instead.")
+                bot_ver = bottoms_dict.get(top_item['nombre'])
+                if bot_ver and bot_item:
+                    explanation = (f"{top_item['nombre']} could replace {bot_item['nombre']} for"
+                                   f" {bot_ver['precio']} instead of {original_bot_price}.")
 
+            # Check if bottom item could replace top (exists in top CSV)
             if not explanation and bot_item and bot_item.get('tipo') == 2:
-                top_version = tops_dict.get(bot_item['nombre'])
-                if top_version and top_item and top_version['precio'] < top_item['precio']:
-                    explanation = (f"{bot_item['nombre']} covers {top_item['nombre']},"
-                                   " using lower price instead.")
+                top_ver = tops_dict.get(bot_item['nombre'])
+                if top_ver and top_item:
+                    explanation = (f"{bot_item['nombre']} could replace {top_item['nombre']} for"
+                                   f" {top_ver['precio']} instead of {original_top_price}.")
 
         details_label.config(text=explanation if explanation else '')
+
+        # Show maximum possible price if it's higher than current total
+        if max_possible > total:
+            max_price_label.config(text=f"Maximum possible price: {int(max_possible)}")
+        else:
+            max_price_label.config(text='')
+
+    # Create the checkbox AFTER update_display is defined
+    prices_checkbox = tk.Checkbutton(sel_frame, text='Prices', variable=show_prices_var,
+                                     bg=root_bg, font=('Segoe UI', 8),
+                                     command=update_display)
+    prices_checkbox.grid(row=0, column=4, rowspan=2, sticky=tk.NS, padx=(8, 0), pady=6)
 
     top_combo.bind('<<ComboboxSelected>>', update_display)
     bottom_combo.bind('<<ComboboxSelected>>', update_display)
 
     # initial update
     update_display()
-
-    def show_selection():
-        top_sel = top_var.get()
-        bot_sel = bottom_var.get()
-        total_text = price_display.cget("text")
-        messagebox.showinfo('Selection', f'Top: {top_sel}\nBottom: {bot_sel}\nTotal: {total_text}')
-
-    _btn = ttk.Button(frm, text='Show selection', command=show_selection)
-    #_btn.grid(row=5, column=0, columnspan=2, pady=12)
 
     root.mainloop()
 
