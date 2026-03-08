@@ -19,12 +19,12 @@ DEFAULT_BOTTOM_ITEMS = [
     ('belt', 300, 'special'),
 ]
 CSV_COLUMNS = ['nombre', 'precio', 'categoria', 'tipo']
-WINDOW_WIDTH = 540
-WINDOW_HEIGHT = 400
+WINDOW_WIDTH = 560
+WINDOW_HEIGHT = 520
 FONT_LABEL = ('Segoe UI', 10)
 FONT_INFO = ('Segoe UI', 12, 'bold')
-FONT_TOTAL = ('Segoe UI', 36, 'bold')
-FONT_NAME = ('Segoe UI', 12, 'bold')
+FONT_TOTAL = ('Segoe UI', 50, 'bold')
+FONT_NAME = ('Segoe UI', 14, 'bold')
 FONT_DUP = ('Segoe UI', 10)
 COLOR_TOTAL_LOW = '#2E7D32'  # green
 COLOR_TOTAL_MID = '#F57C00'  # orange
@@ -32,6 +32,40 @@ COLOR_TOTAL_HIGH = '#C62828'  # red
 COLOR_DUP_TEXT = '#555555'
 THRESH_MID = 200
 THRESH_HIGH = 400
+
+# Temas: claro (light) y oscuro (dark)
+THEMES = {
+    'light': {
+        'bg': "#e0d8d6",
+        'frame': '#f8f8f8',
+        'frame_elevated': '#ffffff',
+        'shadow': '#e8e8e8',
+        'text': '#000000',
+        'text_secondary': '#666666',
+        'label': '#333333',
+        'button': '#007acc',
+        'button_text': '#ffffff',
+        'button_hover': '#005a9e',
+        'separator': '#e0e0e0',
+        'accent': '#007acc',
+        'border': '#d0d0d0',
+    },
+    'dark': {
+        'bg': "#3D4246",
+        'frame': '#252526',
+        'frame_elevated': '#2d2d30',
+        'shadow': '#1a1a1a',
+        'text': "#c2d7f1",
+        'text_secondary': "#b6d0d4",
+        'label': "#919dc5",
+        'button': '#0e639c',
+        'button_text': "#531b9c",
+        'button_hover': '#1177bb',
+        'separator': '#3e3e42',
+        'accent': '#007acc',
+        'border': '#3e3e42',
+    }
+}
 
 
 def load_items(csv_path):
@@ -84,6 +118,33 @@ def make_csv_if_missing(path, rows):
                 writer.writerow(r)
 
 
+def apply_theme_to_widgets(parent, theme_colors):
+    """Aplica recursivamente los colores del tema a todos los widgets."""
+    for widget in parent.winfo_children():
+        if isinstance(widget, tk.Label):
+            fg = theme_colors.get('text', theme_colors['label'])
+            bg = theme_colors['bg']
+            widget.config(bg=bg, fg=fg)
+        elif isinstance(widget, (tk.Frame, tk.LabelFrame)):
+            # Para LabelFrames, aplicar colores al marco y al texto
+            if isinstance(widget, tk.LabelFrame):
+                widget.config(bg=theme_colors['bg'], fg=theme_colors['label'],
+                             borderwidth=2, relief=tk.FLAT)
+            else:
+                widget.config(bg=theme_colors['bg'])
+            apply_theme_to_widgets(widget, theme_colors)
+        elif isinstance(widget, ttk.Combobox):
+            pass  # ttk widgets tienen su propio sistema de temas
+        elif isinstance(widget, tk.Button):
+            widget.config(bg=theme_colors['button'], fg=theme_colors['button_text'],
+                         activebackground=theme_colors.get('button_hover', theme_colors['button']),
+                         activeforeground=theme_colors['button_text'])
+        elif isinstance(widget, tk.Checkbutton):
+            widget.config(bg=theme_colors['bg'], fg=theme_colors['text'],
+                         activebackground=theme_colors['bg'],
+                         activeforeground=theme_colors['text'],
+                         selectcolor=theme_colors['bg'])
+
 def main():
     """ Main function to run the outfit price calculator GUI. """
     base = os.path.dirname(__file__)
@@ -107,36 +168,110 @@ def main():
     except tk.TclError:
         pass
 
-    root_bg = root.cget('bg')
+    # Configurar estilos personalizados para Combobox (amarillo pastel con mejor contraste)
+    style.configure('Light.TCombobox',
+                    entrybackground="#E6DD8F",  # Amarillo pastel claro
+                   fieldbackground="#E6DD8F",  # Amarillo pastel claro
+                   background="#E0DEC7",
+                   foreground='#333333',       # Texto oscuro para contraste
+                   insertcolor='#333333')
+
+    style.configure('Dark.TCombobox',
+                     entrybackground='#E6D68F',  # Amarillo pastel más saturado/oscuro
+                   fieldbackground='#E6D68F',  # Amarillo pastel más saturado/oscuro
+                   background="#DBC870",
+                   foreground='#1a1a1a',       # Texto muy oscuro para buen contraste
+                   insertcolor='#1a1a1a')
+
+    # Variable para guardar el tema actual
+    current_theme = {'theme': 'light'}
+
+    def toggle_theme():
+        """Cambia entre tema claro y oscuro."""
+        new_theme = 'dark' if current_theme['theme'] == 'light' else 'light'
+        current_theme['theme'] = new_theme
+        theme_colors = THEMES[new_theme]
+
+        # Actualizar ventana principal y frame principal
+        root.config(bg=theme_colors['bg'])
+        frm.config(bg=theme_colors['bg'])
+
+        # Aplicar tema a todos los widgets recursivamente
+        apply_theme_to_widgets(frm, theme_colors)
+
+        # Actualizar específicamente los frames de nombres
+        sel_frame.config(bg=theme_colors['bg'], fg=theme_colors['label'])
+        names_topframe.config(bg=theme_colors['bg'], fg=theme_colors['label'])
+        names_bottomframe.config(bg=theme_colors['bg'], fg=theme_colors['label'])
+        total_frame.config(bg=theme_colors['bg'])
+
+        # Actualizar botón Random con colores pastel según tema
+        if new_theme == 'light':
+            btn.config(bg='#E8B4D4', fg='#333333', activebackground='#D99DB8')
+            # Cambiar estilo de combobox a Light (amarillo pastel claro)
+            top_combo.configure(style='Light.TCombobox')
+            bottom_combo.configure(style='Light.TCombobox')
+        else:  # dark
+            btn.config(bg='#C9A0B3', fg="#7034fc", activebackground='#B88AA7')
+            # Cambiar estilo de combobox a Dark (amarillo pastel oscuro)
+            top_combo.configure(style='Dark.TCombobox')
+            bottom_combo.configure(style='Dark.TCombobox')
+
+        # Actualizar botón de tema con nuevo color
+        theme_btn.config(bg=theme_colors['bg'], fg=theme_colors['label'],
+                        text='🌙' if new_theme == 'dark' else '☀️',
+                        activebackground=theme_colors['frame'],
+                        activeforeground=theme_colors['label'])
+
+    root_bg = THEMES['light']['bg']
+    root.config(bg=root_bg)
 
     # Use tk.Frame so we can control background color consistently
     frm = tk.Frame(root, bg=root_bg, padx=14, pady=8)
     frm.pack(fill=tk.BOTH, expand=True)
 
-    sel_frame = tk.Frame(frm, bg=root_bg)
+    # Botón para cambiar de tema (esquina superior derecha) con estilo mejorado
+    theme_btn = tk.Button(root, text='☀️', font=('Segoe UI', 14),
+                          command=toggle_theme, bg=root_bg, fg='#333333',
+                          relief=tk.FLAT, bd=0, highlightthickness=0,
+                          activebackground=THEMES['light']['bg'],
+                          activeforeground='#333333')
+    theme_btn.pack(side=tk.TOP, anchor=tk.NE, padx=10, pady=5)
+
+    sel_frame = tk.LabelFrame(frm, bg=THEMES['light']['bg'],
+                              text='top / bottom selection',
+                              font=FONT_LABEL, padx=8, pady=8, fg='#333333',
+                              relief=tk.FLAT, borderwidth=2)
     sel_frame.grid(row=2, column=0, sticky=tk.W)
 
     tk.Label(sel_frame, text='Top item:', font=FONT_LABEL,
-             bg=root_bg).grid(row=0, column=0, sticky=tk.W, padx=(0,8))
+             bg=THEMES['light']['bg'], fg='#333333').grid(row=0,
+                                                          column=0,
+                                                          sticky=tk.W,
+                                                          padx=(0,8))
     top_names = [t['nombre'] for t in tops]
     top_var = tk.StringVar(value=top_names[0] if top_names else '')
     top_combo = ttk.Combobox(sel_frame, textvariable=top_var,
-                             values=top_names, state='readonly', width=22)
+                             values=top_names, state='readonly', width=22,
+                             style='Light.TCombobox')
     top_combo.grid(row=0, column=1, sticky=tk.W, padx=4, pady=6)
 
     tk.Label(sel_frame, text='Bottom item:', font=FONT_LABEL,
-             bg=root_bg).grid(row=1, column=0, sticky=tk.W, padx=(0,8))
+             bg=THEMES['light']['bg'], fg='#333333').grid(row=1,
+                                                          column=0, sticky=tk.W,
+                                                          padx=(0,8))
     bottom_names = [b['nombre'] for b in bottoms]
     bottom_var = tk.StringVar(value=bottom_names[0] if bottom_names else '')
     bottom_combo = ttk.Combobox(sel_frame, textvariable=bottom_var,
-                                values=bottom_names, state='readonly', width=22)
+                                values=bottom_names, state='readonly', width=22,
+                                style='Light.TCombobox')
     bottom_combo.grid(row=1, column=1, sticky=tk.W, padx=4, pady=6)
     # fonts for info and duplicate labels
     info_font = tkfont.Font(family=FONT_INFO[0], size=FONT_INFO[1], weight=FONT_INFO[2])
     dup_font = tkfont.Font(family=FONT_DUP[0], size=FONT_DUP[1])
 
     # create a small frame to hold the top info label and its tipo-2 duplicate label
-    top_info_frame = tk.Frame(sel_frame, bg=root_bg)
+    top_info_frame = tk.Frame(sel_frame, bg=root_bg )
     top_info_frame.grid(row=0, column=2, sticky=tk.W, padx=(12,0))
     top_info_label = tk.Label(top_info_frame, text='', font=info_font, bg=root_bg, justify=tk.LEFT)
     top_info_label.pack(side=tk.LEFT)
@@ -156,9 +291,9 @@ def main():
     bottom_dup_label.pack(side=tk.LEFT, padx=(8,0))
 
     # Horizontal separator line after selectors
-    separator2 = tk.Frame(frm, bg='#cccccc', height=1)
-    separator2.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
-    separator2.grid_propagate(False)
+    #separator2 = tk.Frame(frm, bg='#cccccc', height=1)
+    #separator2.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
+    #separator2.grid_propagate(False)
 
     # Button at right of selectors
     def show_selection():
@@ -170,7 +305,11 @@ def main():
             bottom_var.set(random_bottom['nombre'])
             update_display()
 
-    btn = ttk.Button(sel_frame, text='Random \n Outfit', command=show_selection)
+    btn = tk.Button(sel_frame, text='Random\nOutfit', command=show_selection,
+                   bg='#E8B4D4', fg="#312929", font=('Segoe UI', 10, 'bold'),
+                   relief=tk.SOLID, bd=2, activebackground='#D99DB8',
+                   activeforeground='#333333', cursor='hand2', padx=12, pady=10,
+                   highlightthickness=0, overrelief=tk.SOLID)
     btn.grid(row=0, column=3, rowspan=2, sticky=tk.NS, padx=(12, 0), pady=6)
     # Checkbox to show/hide prices will be created after update_display() is defined
     show_prices_var = tk.BooleanVar(value=False)
@@ -185,33 +324,46 @@ def main():
     price_display.pack(pady=(4,0))
 
     # Frame to hold the item names with separator
-    names_frame = tk.Frame(total_frame, bg=root_bg)
-    names_frame.pack(pady=(6,0))
+    names_topframe = tk.LabelFrame(total_frame, bg=THEMES['light']['bg'], text='Top',
+                                font=FONT_LABEL, padx=8, pady=8, fg='#333333',
+                                relief=tk.FLAT, borderwidth=1, width=350, height=84)
+    names_topframe.pack(pady=(6,0))
+    names_topframe.pack_propagate(False)  # No cambiar tamaño según contenido
+
+    names_bottomframe = tk.LabelFrame(total_frame, bg=THEMES['light']['bg'],
+                                      text='Bottom',
+                                font=FONT_LABEL, padx=8, pady=8, fg='#333333',
+                                relief=tk.FLAT, borderwidth=1, width=350, height=84)
+    names_bottomframe.pack(pady=(6,0))
+    names_bottomframe.pack_propagate(False)  # No cambiar tamaño según contenido
 
     # labels under the total showing the selected top and bottom item names
-    top_name_label = tk.Label(names_frame, text='', font=FONT_NAME, bg=root_bg)
-    top_name_label.pack()
+    top_name_label = tk.Label(names_topframe, text='', font=FONT_NAME, bg=THEMES['light']['bg'],
+                             wraplength=320, justify=tk.CENTER)
+    top_name_label.pack(fill=tk.BOTH, expand=True)
 
     # Dashed separator between top and bottom names
-    dashed_sep = tk.Label(names_frame, text='─ ─ ─ ─ ─', font=('Segoe UI', 8),
-                          bg=root_bg, fg='#aaaaaa')
-    dashed_sep.pack(pady=(2,2))
+    #dashed_sep = tk.Label(names_topframe, text='─ ─ ─ ─ ─', font=('Segoe UI', 8),
+     #                     bg=THEMES['light']['bg'], fg='#aaaaaa')
+    #dashed_sep.pack(pady=(2,2))
 
-    bottom_name_label = tk.Label(names_frame, text='', font=FONT_NAME, bg=root_bg)
-    bottom_name_label.pack()
+    bottom_name_label = tk.Label(names_bottomframe, text='', font=FONT_NAME,
+                                 bg=THEMES['light']['bg'], wraplength=320, justify=tk.CENTER)
+    bottom_name_label.pack(fill=tk.BOTH, expand=True)
 
     # Horizontal separator line after total
-    separator1 = tk.Frame(frm, bg='#cccccc', height=1)
-    separator1.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
-    separator1.grid_propagate(False)
+    #separator1 = tk.Frame(frm, bg='#cccccc', height=1)
+    #separator1.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
+    #separator1.grid_propagate(False)
 
-    details_label = tk.Label(frm, text='', wraplength=380, bg=root_bg, font=('Segoe UI', 9),
+    details_label = tk.Label(frm, text='', wraplength=380, bg=THEMES['light']['bg'],
+                             font=('Segoe UI', 9),
                              fg='#666666')
     details_label.grid(row=4, column=0, sticky=tk.W, pady=(6,0))
 
     # Label to show maximum possible price
     bold_font = tkfont.Font(family='Segoe UI', size=9, weight='bold')
-    max_price_label = tk.Label(frm, text='', bg=root_bg, font=bold_font, fg='#333333')
+    max_price_label = tk.Label(frm, text='', bg=THEMES['light']['bg'], font=bold_font, fg='#333333')
     max_price_label.grid(row=5, column=0, sticky=tk.W, pady=(4,0))
 
 
