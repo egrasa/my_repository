@@ -3,20 +3,43 @@
 import os
 import csv
 import random
+import math
+import sys
 import tkinter as tk
 from tkinter import ttk
 import tkinter.font as tkfont
 
 # Constants
 DEFAULT_TOP_ITEMS = [
-    ('bra', 50, 'basic'),
-    ('bodysuit', 50, 'basic'),
-    ('dress', 50, 'basic'),
+    ('bra', 50, 'basic', 0),
+    ('bodysuit', 50, 'basic', 2),
+    ('regular dress', 50, 'basic', 2),
+    ('transparent dress', 100, 'normal', 2),
+    ('belt bra', 150, 'special', 0),
+    ('transparent top', 100, 'normal', 0),
+    ('transparent robe', 100, 'normal', 2),
+    ('paper bra', 150, 'special', 0),
+    ('band aid bra', 150, 'special', 0),
+    ('painting bra', 200, 'extreme', 0),
+    ('foam bra', 200, 'extreme', 0),
+    ('glitter bra', 300, 'extreme', 0),
+    ('naked top', 500, 'naked', 0),
 ]
 DEFAULT_BOTTOM_ITEMS = [
-    ('panties', 50, 'basic'),
-    ('skirt', 200, 'normal'),
-    ('belt', 300, 'special'),
+    ('panties', 50, 'basic', 1),
+    ('bodysuit', 50, 'basic', 2),
+    ('regular dress', 50, 'basic', 2),
+    ('regular skirt/shorts', 50, 'basic', 1),
+    ('transparent dress', 100, 'normal', 2),
+    ('pantyhose', 200, 'normal', 1),
+    ('transparent robe', 200, 'normal', 2),
+    ('paper panties', 200, 'normal', 1),
+    ('belt skirt', 300, 'special', 1),
+    ('band aid panties', 400, 'extreme', 1),
+    ('foam panties', 400, 'extreme', 1),
+    ('painting panties', 400, 'extreme', 1),
+    ('glitter panties', 600, 'extreme', 1),
+    ('naked', 1000, 'naked', 1),
 ]
 CSV_COLUMNS = ['nombre', 'precio', 'categoria', 'tipo']
 WINDOW_WIDTH = 560
@@ -147,7 +170,14 @@ def apply_theme_to_widgets(parent, theme_colors):
 
 def main():
     """ Main function to run the outfit price calculator GUI. """
-    base = os.path.dirname(__file__)
+    # Determinar la ruta base: funciona tanto con .py como con .exe
+    if getattr(sys, 'frozen', False):
+        # Se ejecuta como .exe (compilado con PyInstaller)
+        base = os.path.dirname(sys.executable)
+    else:
+        # Se ejecuta como script .py
+        base = os.path.dirname(os.path.abspath(__file__))
+    
     top_csv = os.path.join(base, 'top_items.csv')
     bottom_csv = os.path.join(base, 'bottom_items.csv')
 
@@ -183,6 +213,12 @@ def main():
                    foreground='#1a1a1a',       # Texto muy oscuro para buen contraste
                    insertcolor='#1a1a1a')
 
+    # Configurar estilos personalizados para Progressbar con gradiente de color
+    style.configure('Green.Vertical.TProgressbar', background=COLOR_TOTAL_LOW)
+    style.configure('Yellow.Vertical.TProgressbar', background='#FFD700')
+    style.configure('Orange.Vertical.TProgressbar', background=COLOR_TOTAL_MID)
+    style.configure('Red.Vertical.TProgressbar', background=COLOR_TOTAL_HIGH)
+
     # Variable para guardar el tema actual
     current_theme = {'theme': 'light'}
 
@@ -195,6 +231,8 @@ def main():
         # Actualizar ventana principal y frame principal
         root.config(bg=theme_colors['bg'])
         frm.config(bg=theme_colors['bg'])
+        main_container.config(bg=theme_colors['bg'])
+        bar_frame.config(bg=theme_colors['bg'])
 
         # Aplicar tema a todos los widgets recursivamente
         apply_theme_to_widgets(frm, theme_colors)
@@ -223,12 +261,21 @@ def main():
                         activebackground=theme_colors['frame'],
                         activeforeground=theme_colors['label'])
 
+        # Actualizar labels de la barra de precio
+        bar_max_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
+        bar_min_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
+
     root_bg = THEMES['light']['bg']
     root.config(bg=root_bg)
 
     # Use tk.Frame so we can control background color consistently
-    frm = tk.Frame(root, bg=root_bg, padx=14, pady=8)
-    frm.pack(fill=tk.BOTH, expand=True)
+    # Main container with content on left and price bar on right
+    main_container = tk.Frame(root, bg=root_bg)
+    main_container.pack(fill=tk.BOTH, expand=True, padx=14, pady=8)
+
+    # Left frame for main content
+    frm = tk.Frame(main_container, bg=root_bg)
+    frm.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     # Botón para cambiar de tema (esquina superior derecha) con estilo mejorado
     theme_btn = tk.Button(root, text='☀️', font=('Segoe UI', 14),
@@ -237,6 +284,27 @@ def main():
                           activebackground=THEMES['light']['bg'],
                           activeforeground='#333333')
     theme_btn.pack(side=tk.TOP, anchor=tk.NE, padx=10, pady=5)
+
+    # Right frame for price bar (vertical progress bar)
+    bar_frame = tk.Frame(main_container, bg=root_bg, width=60)
+    bar_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
+    bar_frame.pack_propagate(False)
+
+    # Label for max price
+    bar_max_label = tk.Label(bar_frame, text='1500', font=('Segoe UI', 8),
+                             bg=root_bg, fg='#888888')
+    bar_max_label.pack(side=tk.TOP, pady=2)
+
+    # Vertical progress bar for price visualization (100-1500 scale with logarithmic)
+    price_bar = ttk.Progressbar(bar_frame, orient=tk.VERTICAL, length=300,
+                                mode='determinate', maximum=100, value=0,
+                                style='Green.Vertical.TProgressbar')
+    price_bar.pack(fill=tk.BOTH, expand=True, pady=5)
+
+    # Label for min price
+    bar_min_label = tk.Label(bar_frame, text='50', font=('Segoe UI', 8),
+                             bg=root_bg, fg='#888888')
+    bar_min_label.pack(side=tk.BOTTOM, pady=2)
 
     sel_frame = tk.LabelFrame(frm, bg=THEMES['light']['bg'],
                               text='top / bottom selection',
@@ -374,12 +442,56 @@ def main():
     tops_dict = build_lookup(tops)
     bottoms_dict = build_lookup(bottoms)
 
+    def price_to_logarithmic_scale(price, min_price=50, max_price=1500):
+        """Convierte un precio a escala logarítmica (50-1500)."""
+        if price < min_price:
+            return 0
+        if price >= max_price:
+            return 100
+        # Usar logaritmo natural para suavizar la escala en el rango 50-1500
+        # Fórmula: log(precio - min + 1) / log(max - min + 1) * 100
+        log_value = math.log(price - min_price + 1) / math.log(max_price - min_price + 1) * 100
+        return min(log_value, 100)
+
     def color_for_total(total):
         if total <= THRESH_MID:
             return COLOR_TOTAL_LOW
         if total <= THRESH_HIGH:
             return COLOR_TOTAL_MID
         return COLOR_TOTAL_HIGH
+
+    def hex_to_rgb(hex_color):
+        """Convierte color hexadecimal a tuple RGB."""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    def rgb_to_hex(r, g, b):
+        """Convierte RGB a hexadecimal."""
+        return f'#{r:02x}{g:02x}{b:02x}'
+
+    def interpolate_color(color1, color2, factor):
+        """Interpola entre dos colores RGB."""
+        r1, g1, b1 = hex_to_rgb(color1)
+        r2, g2, b2 = hex_to_rgb(color2)
+        r = int(r1 + (r2 - r1) * factor)
+        g = int(g1 + (g2 - g1) * factor)
+        b = int(b1 + (b2 - b1) * factor)
+        return rgb_to_hex(r, g, b)
+
+    def get_bar_color(price, min_price=50, mid_price=275, max_price=1500):
+        """Retorna color de gradiente según el precio."""
+        if price <= min_price:
+            return COLOR_TOTAL_LOW  # Verde
+        elif price <= mid_price:
+            # Interpolación verde a naranja
+            factor = (price - min_price) / (mid_price - min_price)
+            return interpolate_color(COLOR_TOTAL_LOW, COLOR_TOTAL_MID, factor)
+        elif price <= max_price:
+            # Interpolación naranja a rojo
+            factor = (price - mid_price) / (max_price - mid_price)
+            return interpolate_color(COLOR_TOTAL_MID, COLOR_TOTAL_HIGH, factor)
+        else:
+            return COLOR_TOTAL_HIGH  # Rojo
 
 
     def update_display(_event=None):
@@ -464,6 +576,14 @@ def main():
 
         # Update price display with appropriate color
         price_display.config(text=str(int(total)), fg=color_for_total(total))
+
+        # Update price bar (0-1500 scale) with color gradient
+        price_bar['value'] = price_to_logarithmic_scale(total)  # Escala logarítmica
+        # Get the appropriate bar color based on price
+        bar_color = get_bar_color(total)
+        # Create or update style with the interpolated color
+        style.configure('Dynamic.Vertical.TProgressbar', background=bar_color)
+        price_bar.config(style='Dynamic.Vertical.TProgressbar')
 
         # Update item name labels below total
         # Tipo 2 items appear in both lines, but avoid duplicates if same item is selected
