@@ -1,16 +1,52 @@
 """ Simple GUI to calculate outfit price based on CSV files. """
 
-import os
-import csv
 import random
-import math
-import sys
-import json
 import tkinter as tk
-from tkinter import ttk, messagebox
 import tkinter.font as tkfont
-import difflib
 from collections import Counter
+from tkinter import messagebox, ttk
+from typing import Optional
+
+from app_constants import (
+    COLOR_DUP_TEXT,
+    COLOR_TOTAL_HIGH,
+    COLOR_TOTAL_LOW,
+    COLOR_TOTAL_MID,
+    DEFAULT_BOTTOM_ITEMS,
+    DEFAULT_TOP_ITEMS,
+    FOOTER_PANEL_HEIGHT,
+    FONT_DUP,
+    FONT_INFO,
+    FONT_LABEL,
+    FONT_NAME,
+    FONT_TOTAL,
+    HERO_PANEL_HEIGHT,
+    ITEM_NAMES_PANEL_HEIGHT,
+    QUICK_NOTES_HEIGHT,
+    RATING_LABELS,
+    SELECTOR_PANEL_HEIGHT,
+    THEMES,
+    TOTAL_METRIC_CARD_HEIGHT,
+    TOTAL_METRIC_CARD_WIDTH,
+    TOTAL_PANEL_HEIGHT,
+    WINDOW_HEIGHT,
+    WINDOW_WIDTH,
+)
+from item_store import get_runtime_base_dir, load_items, make_csv_if_missing
+from permissions import PERMISSIONS, filter_items_by_permissions
+from pricing import (
+    apply_price_multiplier_to_details,
+    build_lookup,
+    calculate_combination_details,
+    color_for_total,
+    get_bar_color,
+    price_to_logarithmic_scale,
+    round_price_to_step,
+)
+from ratings_store import get_combination_rating, load_ratings, set_combination_rating
+from search_utils import fuzzy_search
+from statistics_utils import calculate_statistics
+
 from matplotlib.patches import Patch
 try:
     import matplotlib.pyplot as plt
@@ -20,136 +56,49 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-# Constants
-DEFAULT_TOP_ITEMS = [
-    ('bra', 50, 'basic', 0),
-    ('bodysuit', 50, 'basic', 2),
-    ('regular dress', 50, 'basic', 2),
-    ('transparent dress', 100, 'normal', 2),
-    ('belt bra', 150, 'special', 0),
-    ('transparent top', 100, 'normal', 0),
-    ('transparent robe', 100, 'normal', 2),
-    ('paper bra', 150, 'special', 0),
-    ('band aid bra', 150, 'special', 0),
-    ('painting bra', 200, 'extreme', 0),
-    ('foam bra', 200, 'extreme', 0),
-    ('glitter bra', 300, 'extreme', 0),
-    ('naked top', 500, 'naked', 0),
-]
-DEFAULT_BOTTOM_ITEMS = [
-    ('panties', 50, 'basic', 1),
-    ('bodysuit', 50, 'basic', 2),
-    ('regular dress', 50, 'basic', 2),
-    ('regular skirt/shorts', 50, 'basic', 1),
-    ('transparent dress', 100, 'normal', 2),
-    ('pantyhose', 200, 'normal', 1),
-    ('transparent robe', 200, 'normal', 2),
-    ('paper panties', 200, 'normal', 1),
-    ('belt skirt', 300, 'special', 1),
-    ('band aid panties', 400, 'extreme', 1),
-    ('foam panties', 400, 'extreme', 1),
-    ('painting panties', 400, 'extreme', 1),
-    ('glitter panties', 600, 'extreme', 1),
-    ('naked', 1000, 'naked', 1),
-]
-CSV_COLUMNS = ['nombre', 'precio', 'categoria', 'tipo']
-WINDOW_WIDTH = 620
-WINDOW_HEIGHT = 560
-FONT_LABEL = ('Segoe UI', 10)
-FONT_INFO = ('Segoe UI', 12, 'bold')
-FONT_TOTAL = ('Segoe UI', 50, 'bold')
-FONT_NAME = ('Segoe UI', 14, 'bold')
-FONT_DUP = ('Segoe UI', 10)
-COLOR_TOTAL_LOW = '#2E7D32'  # green
-COLOR_TOTAL_MID = '#F57C00'  # orange
-COLOR_TOTAL_HIGH = '#C62828'  # red
-COLOR_DUP_TEXT = '#555555'
-THRESH_MID = 200
-THRESH_HIGH = 400
 
-# Temas: claro (light) y oscuro (dark)
-THEMES = {
-    'light': {
-        'bg': "#e0d8d6",
-        'frame': '#f8f8f8',
-        'frame_elevated': '#ffffff',
-        'shadow': '#e8e8e8',
-        'text': '#000000',
-        'text_secondary': '#666666',
-        'label': '#333333',
-        'button': '#007acc',
-        'button_text': '#ffffff',
-        'button_hover': '#005a9e',
-        'separator': '#e0e0e0',
-        'accent': '#007acc',
-        'border': '#d0d0d0',
-    },
-    'dark': {
-        'bg': "#3D4246",
-        'frame': '#252526',
-        'frame_elevated': '#2d2d30',
-        'shadow': '#1a1a1a',
-        'text': "#c2d7f1",
-        'text_secondary': "#b6d0d4",
-        'label': "#919dc5",
-        'button': '#0e639c',
-        'button_text': "#531b9c",
-        'button_hover': '#1177bb',
-        'separator': '#3e3e42',
-        'accent': '#007acc',
-        'border': '#3e3e42',
-    }
-}
+class ToolTip:
+    """Small tooltip helper for Tk widgets."""
 
+    def __init__(self, widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        widget.bind('<Enter>', self.show_tooltip, add='+')
+        widget.bind('<Leave>', self.hide_tooltip, add='+')
+        widget.bind('<ButtonPress>', self.hide_tooltip, add='+')
 
-def load_items(csv_path):
-    """ Load items from a CSV file and return a list of dictionaries. """
-    items = []
-    try:
-        with open(csv_path, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            # Clean column names (remove leading/trailing spaces)
-            if reader.fieldnames:
-                reader.fieldnames = [name.strip() for name in reader.fieldnames]
-            for row in reader:
-                # Normalize row keys to handle spaces in column names
-                row = {k.strip(): v for k, v in row.items()}
-                # parse precio (price) and tipo fields
-                try:
-                    price = float(row.get('precio', 0))
-                except ValueError:
-                    price = 0.0
-                # tipo column: 0=top only, 1=bottom only, 2=both
-                tipo_raw = row.get('tipo', '').strip()
-                try:
-                    tipo_val = int(tipo_raw) if tipo_raw else 0
-                except ValueError:
-                    tipo_val = 0
-                items.append({'nombre': row.get('nombre', ''),
-                              'precio': price,
-                              'categoria': row.get('categoria', ''),
-                              'tipo': tipo_val})
-    except FileNotFoundError:
-        pass
-    return items
+    def show_tooltip(self, _event=None):
+        """ Show tooltip near the widget.
+        If tooltip already exists or text is empty, do nothing."""
+        if self.tooltip_window is not None or not self.text:
+            return
+        x_pos = self.widget.winfo_rootx() + 12
+        y_pos = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f'+{x_pos}+{y_pos}')
 
+        label = tk.Label(
+            self.tooltip_window,
+            text=self.text,
+            justify=tk.LEFT,
+            bg='#FFF8D9',
+            fg='#2A2A2A',
+            relief=tk.SOLID,
+            borderwidth=1,
+            padx=8,
+            pady=5,
+            wraplength=240,
+            font=('Segoe UI', 9),
+        )
+        label.pack()
 
-def make_csv_if_missing(path, rows):
-    """ Create a CSV file with the given rows if it doesn't already exist. """
-    if os.path.exists(path):
-        return
-
-    is_top = 'top' in os.path.basename(path).lower()
-    default_tipo = 0 if is_top else 1
-
-    with open(path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(CSV_COLUMNS)
-        for r in rows:
-            if len(r) == 3:
-                writer.writerow([r[0], r[1], r[2], default_tipo])
-            else:
-                writer.writerow(r)
+    def hide_tooltip(self, _event=None):
+        """ Destroy tooltip if it exists."""
+        if self.tooltip_window is not None:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
 
 
 def apply_theme_to_widgets(parent, theme_colors):
@@ -179,62 +128,7 @@ def apply_theme_to_widgets(parent, theme_colors):
                          activeforeground=theme_colors['text'],
                          selectcolor=theme_colors['bg'])
 
-def fuzzy_search(query: str, items: list, key: str = 'nombre') -> list:
-    """Realizar búsqueda fuzzy sobre una lista de items."""
-    if not query:
-        return items
-
-    names = [item[key] for item in items]
-    matches = difflib.get_close_matches(query, names, n=len(names), cutoff=0.3)
-
-    # Retornar items que coinciden, manteniendo el orden por relevancia
-    result = []
-    for match in matches:
-        for item in items:
-            if item[key] == match and item not in result:
-                result.append(item)
-    return result
-
-
-def filter_items_by_permissions(items: list) -> list:
-    """Filter out items based on current permissions."""
-    if PERMISSIONS.get('naked_options', False) == False:
-        # If naked_options is DISABLED, filter out items with 'naked' category
-        return [item for item in items if item.get('categoria', '').lower() != 'naked']
-    return items
-
-
-def calculate_statistics(all_items: list, ratings: dict = None) -> dict:
-    """Calcular estadísticas de los items y calificaciones."""
-    if not all_items:
-        return {}
-
-    prices = [item['precio'] for item in all_items]
-    categories = [item['categoria'] for item in all_items]
-    tipos = [item['tipo'] for item in all_items]
-
-    # Contar calificaciones
-    rating_counts = {'favorite': 0, 'normal': 0, 'rare': 0, 'incompatible': 0}
-    if ratings:
-        for rating in ratings.values():
-            if rating in rating_counts:
-                rating_counts[rating] += 1
-
-    stats = {
-        'total_items': len(all_items),
-        'avg_price': sum(prices) / len(prices),
-        'min_price': min(prices),
-        'max_price': max(prices),
-        'median_price': sorted(prices)[len(prices)//2],
-        'categories': dict(Counter(categories)),
-        'tipos': dict(Counter(tipos)),
-        'rating_counts': rating_counts,
-        'total_rated': sum(rating_counts.values()),
-    }
-
-    return stats
-
-def show_statistics_window(root, all_items: list, ratings: dict = None):
+def show_statistics_window(root, all_items: list, ratings: Optional[dict] = None):
     """Mostrar ventana con estadísticas."""
     stats = calculate_statistics(all_items, ratings)
 
@@ -247,7 +141,7 @@ def show_statistics_window(root, all_items: list, ratings: dict = None):
     stat_window.geometry("450x500")
 
     text_widget = tk.Text(stat_window, wrap=tk.WORD, font=('Courier', 10))
-    text_widget.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+    text_widget.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
 
     stats_text = f"""
 ESTADÍSTICAS GENERALES
@@ -274,89 +168,13 @@ DISTRIBUCIÓN POR CATEGORÍA:
 
     stats_text += "\nCALIFICACIONES DE COMBINACIONES\n═════════════════════════════════════\n"
     stats_text += f"Total Combinaciones Calificadas: {stats['total_rated']}\n\n"
-    stats_text += f"  ⭐ Favoritos:      {stats['rating_counts']['favorite']}\n"
+    stats_text += f"  ⭐ Favorite:      {stats['rating_counts']['favorite']}\n"
     stats_text += f"  ✓ Normal:         {stats['rating_counts']['normal']}\n"
-    stats_text += f"  ◆ Raro:           {stats['rating_counts']['rare']}\n"
+    stats_text += f"  ◆ Not common:     {stats['rating_counts']['rare']}\n"
     stats_text += f"  ✗ Incompatible:   {stats['rating_counts']['incompatible']}\n"
 
     text_widget.insert("1.0", stats_text)
     text_widget.config(state=tk.DISABLED)
-
-# Rating system for combinations
-RATING_LABELS = {
-    'favorite': ('⭐ Favorito', '#4A9EFF'),
-    'normal': ('✓ Normal', '#4CAF50'),
-    'rare': ('◆ Raro', '#FF9800'),
-    'incompatible': ('✗ Incompatible', '#f44336'),
-    'unrated': ('', '#cccccc')
-}
-
-# Variables globales para permisos (desactivados por defecto)
-PERMISSIONS = {
-    'naked_options': False,
-    'statistics': False,
-    'graphics': False,
-    'califications': False
-}
-
-def get_ratings_file():
-    """Obtener ruta del archivo de ratings."""
-    # Cuando se ejecuta como .exe desde PyInstaller, usar sys._MEIPASS
-    # En desarrollo, usar el directorio del script actual
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    else:
-        base = os.path.dirname(__file__)
-    return os.path.join(base, 'combination_ratings.json')
-
-def load_ratings(_permitted: bool = True):
-    """Cargar calificaciones de combinaciones desde archivo."""
-    # Las calificaciones ya realizadas siempre se cargan, sin importar el permiso
-    ratings_file = get_ratings_file()
-    if os.path.exists(ratings_file):
-        try:
-            with open(ratings_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_ratings(ratings: dict, permitted: bool = True):
-    """Guardar calificaciones a archivo JSON."""
-    # Usar permiso global si está permitido
-    if permitted:
-        permitted = PERMISSIONS.get('califications', False)
-
-    if not permitted:
-        return False
-
-    ratings_file = get_ratings_file()
-    try:
-        with open(ratings_file, 'w', encoding='utf-8') as f:
-            json.dump(ratings, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"Error guardando ratings: {e}")
-        return False
-
-def get_combination_key(top_name: str, bottom_name: str) -> str:
-    """Generar clave única para una combinación."""
-    return f"{top_name}|{bottom_name}"
-
-def get_combination_rating(ratings: dict, top_name: str, bottom_name: str) -> str:
-    """Obtener la calificación de una combinación."""
-    key = get_combination_key(top_name, bottom_name)
-    return ratings.get(key, 'unrated')
-
-def set_combination_rating(ratings: dict, top_name: str, bottom_name: str, rating: str):
-    """Establecer la calificación de una combinación."""
-    key = get_combination_key(top_name, bottom_name)
-    if rating == 'unrated':
-        if key in ratings:
-            del ratings[key]
-    else:
-        ratings[key] = rating
-    save_ratings(ratings)
 
 def show_rating_statistics_window(root, ratings: dict, _tops: list, _bottoms: list):
     """Mostrar estadísticas específicas sobre items con más calificaciones en columnas."""
@@ -383,16 +201,16 @@ def show_rating_statistics_window(root, ratings: dict, _tops: list, _bottoms: li
     # Crear ventana
     stat_window = tk.Toplevel(root)
     stat_window.title("Estadísticas de Calificaciones por Item")
-    stat_window.geometry("1200x650")
+    stat_window.geometry("1200x600")
 
     # Frame principal
     main_frame = tk.Frame(stat_window)
     main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     rating_info = [
-        ('favorite', '⭐\nFavoritos', '#4A9EFF'),
+        ('favorite', '⭐\nFavorite', '#4A9EFF'),
         ('normal', '✓\nNormal', '#4CAF50'),
-        ('rare', '◆\nRaro', '#FF9800'),
+        ('rare', '◆\nNot common', '#FF9800'),
         ('incompatible', '✗\nIncompatible', '#f44336')
     ]
 
@@ -491,7 +309,7 @@ def show_rating_statistics_window(root, ratings: dict, _tops: list, _bottoms: li
         col_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         col_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-def show_graphics_window(_root, all_items: list, ratings: dict = None):
+def show_graphics_window(_root, all_items: list, ratings: Optional[dict] = None):
     """Mostrar gráficos incluyendo distribución de calificaciones."""
     if not HAS_MATPLOTLIB:
         messagebox.showerror("Error", "matplotlib no está instalado.")
@@ -569,7 +387,8 @@ def show_graphics_window(_root, all_items: list, ratings: dict = None):
     plt.show()
 
 def show_rated_combinations_graph(_root, ratings: dict, tops: list, bottoms: list,
-                                  allowed_ratings: list = None):
+                                  allowed_ratings: Optional[list] = None,
+                                  price_multiplier_pct: float = 100.0):
     """Mostrar scatter plot de combinaciones calificadas con precios."""
     if not HAS_MATPLOTLIB:
         messagebox.showerror("Error", "matplotlib no está instalado.")
@@ -639,28 +458,17 @@ def show_rated_combinations_graph(_root, ratings: dict, tops: list, bottoms: lis
                 top_item = tops_dict.get(top_name)
                 bottom_item = bottoms_dict.get(bottom_name)
                 if top_item and bottom_item:
-                    # Aplicar lógica de tipo 2 igual que en la app principal
-                    top_price = top_item['precio']
-                    bot_price = bottom_item['precio']
-
-                    if top_item.get('tipo') == 2 and bottom_item.get('tipo') == 2:
-                        if top_name != bottom_name:
-                            bot_in_top = tops_dict.get(bottom_name)
-                            top_in_bot = bottoms_dict.get(top_name)
-                            top_price = min(top_price,
-                                            bot_in_top['precio']) if bot_in_top else top_price
-                            bot_price = min(bot_price,
-                                            top_in_bot['precio']) if top_in_bot else bot_price
-                    elif top_item.get('tipo') == 2:
-                        bottom_version = bottoms_dict.get(top_name)
-                        if bottom_version:
-                            bot_price = min(bot_price, bottom_version['precio'])
-                    elif bottom_item.get('tipo') == 2:
-                        top_version = tops_dict.get(bottom_name)
-                        if top_version:
-                            top_price = min(top_price, top_version['precio'])
-
-                    prices.append(top_price + bot_price)
+                    combo_details = calculate_combination_details(
+                        top_item,
+                        bottom_item,
+                        tops_dict,
+                        bottoms_dict,
+                    )
+                    adjusted_details = apply_price_multiplier_to_details(
+                        combo_details,
+                        price_multiplier_pct,
+                    )
+                    prices.append(round_price_to_step(adjusted_details['total']))
                 else:
                     prices.append(0)
 
@@ -705,31 +513,41 @@ def show_rated_combinations_graph(_root, ratings: dict, tops: list, bottoms: lis
     # Grid
     ax.grid(True, alpha=0.3, linestyle='--', zorder=0)
 
-    # Leyenda
+    # Leyenda fuera del gráfico, a la derecha
     legend_elements = [
         Patch(facecolor='#4A9EFF', edgecolor='black', label='Favorito'),
         Patch(facecolor='#4CAF50', edgecolor='black', label='Normal'),
         Patch(facecolor='#FF9800', edgecolor='black', label='Raro'),
-        Patch(facecolor='#f44336', edgecolor='black', label='Incompatible')
+        Patch(facecolor='#f44336', edgecolor='black', label='Incompatible'),
     ]
-    ax.legend(handles=legend_elements, loc='upper left', fontsize=10, framealpha=0.95)
+
+    ax.legend(
+        handles=legend_elements,
+        loc='upper left',
+        bbox_to_anchor=(1.02, 1.0),
+        fontsize=10,
+        framealpha=0.6,
+        borderaxespad=0,
+    )
 
     # Agregar anotación sobre los tamaños
     if prices:
         min_price = min(prices)
         max_price = max(prices)
-        ax.text(0.98, 0.02,
-                f'combinación\nRango: ${int(min_price)} - ${int(max_price)}',
-               transform=ax.transAxes, fontsize=9, verticalalignment='bottom',
-               horizontalalignment='right', bbox=dict(boxstyle='round',
-                                                      facecolor='wheat', alpha=0.8))
+        #ax.text(0.98, 0.02,
+                #f'combinación\nRango: ${int(min_price)} - ${int(max_price)}',
+               #transform=ax.transAxes, fontsize=9, verticalalignment='bottom',
+               #horizontalalignment='right', bbox=dict(boxstyle='round',
+                                                      #facecolor='wheat', alpha=0.8))
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 1))
     plt.show()
 
 def show_prices_by_combination_graph(_root, ratings: dict, tops: list, bottoms: list,
-                                     allowed_ratings: list = None):
+                                     allowed_ratings: Optional[list] = None,
+                                     price_multiplier_pct: float = 100.0):
     """Mostrar gráfico de barras de precios por combinación, ordenado de menor a mayor precio."""
+
     if not HAS_MATPLOTLIB:
         messagebox.showerror("Error", "matplotlib no está instalado.")
         return
@@ -762,28 +580,17 @@ def show_prices_by_combination_graph(_root, ratings: dict, tops: list, bottoms: 
             bottom_item = bottoms_dict.get(bottom_name)
 
             if top_item and bottom_item:
-                # Calcular precio aplicando lógica de tipo 2
-                top_price = top_item['precio']
-                bot_price = bottom_item['precio']
-
-                if top_item.get('tipo') == 2 and bottom_item.get('tipo') == 2:
-                    if top_name != bottom_name:
-                        bot_in_top = tops_dict.get(bottom_name)
-                        top_in_bot = bottoms_dict.get(top_name)
-                        top_price = min(top_price,
-                                        bot_in_top['precio']) if bot_in_top else top_price
-                        bot_price = min(bot_price,
-                                        top_in_bot['precio']) if top_in_bot else bot_price
-                elif top_item.get('tipo') == 2:
-                    bottom_version = bottoms_dict.get(top_name)
-                    if bottom_version:
-                        bot_price = min(bot_price, bottom_version['precio'])
-                elif bottom_item.get('tipo') == 2:
-                    top_version = tops_dict.get(bottom_name)
-                    if top_version:
-                        top_price = min(top_price, top_version['precio'])
-
-                total_price = top_price + bot_price
+                combo_details = calculate_combination_details(
+                    top_item,
+                    bottom_item,
+                    tops_dict,
+                    bottoms_dict,
+                )
+                adjusted_details = apply_price_multiplier_to_details(
+                    combo_details,
+                    price_multiplier_pct,
+                )
+                total_price = round_price_to_step(adjusted_details['total'])
                 color = color_map.get(rating, '#cccccc')
                 combo_label = f"{top_name}\n+ {bottom_name}"
                 combo_data.append((combo_label, total_price, color, rating))
@@ -826,9 +633,9 @@ def show_prices_by_combination_graph(_root, ratings: dict, tops: list, bottoms: 
 
     # Leyenda
     legend_elements = [
-        Patch(facecolor='#4A9EFF', edgecolor='black', label='Favorito'),
+        Patch(facecolor='#4A9EFF', edgecolor='black', label='Favorite'),
         Patch(facecolor='#4CAF50', edgecolor='black', label='Normal'),
-        Patch(facecolor='#FF9800', edgecolor='black', label='Raro'),
+        Patch(facecolor='#FF9800', edgecolor='black', label='Rare'),
         Patch(facecolor='#f44336', edgecolor='black', label='Incompatible')
     ]
     ax.legend(handles=legend_elements, loc='upper left', fontsize=10, framealpha=0.95)
@@ -839,11 +646,21 @@ def show_prices_by_combination_graph(_root, ratings: dict, tops: list, bottoms: 
 class AdvancedOptionsWindow:
     """Ventana con opciones avanzadas: búsqueda, estadísticas, gráficos y ratings."""
     def __init__(self, parent, tops: list, bottoms: list, top_var=None, bottom_var=None,
-                 top_combo=None, bottom_combo=None):
+                 top_combo=None, bottom_combo=None, show_prices_var=None,
+                 on_display_change=None, price_multiplier_var=None,
+                 price_multiplier_enabled_var=None, main_item_names_provider=None,
+                 outfit_preset_var=None, on_preset_change=None):
         self.tops = tops
         self.bottoms = bottoms
         self.all_items = tops + bottoms
         self.ratings = load_ratings()
+        self.show_prices_var = show_prices_var
+        self.on_display_change = on_display_change
+        self.price_multiplier_var = price_multiplier_var
+        self.price_multiplier_enabled_var = price_multiplier_enabled_var
+        self.main_item_names_provider = main_item_names_provider
+        self.outfit_preset_var = outfit_preset_var
+        self.on_preset_change = on_preset_change
 
         # Referencias a los comboboxes principales para verificar permisos
         self.top_var = top_var
@@ -857,27 +674,33 @@ class AdvancedOptionsWindow:
         self.show_rare_var = tk.BooleanVar(value=True)
         self.show_incompatible_var = tk.BooleanVar(value=True)
 
-        # Variables de permisos (desactivados por defecto)
-        self.naked_options_permitted = tk.BooleanVar(value=False)
-        self.statistics_permitted = tk.BooleanVar(value=False)
-        self.graphics_permitted = tk.BooleanVar(value=False)
-        self.califications_permitted = tk.BooleanVar(value=False)
+        # Variables de permisos sincronizadas con el estado actual de la sesión.
+        self.naked_options_permitted = tk.BooleanVar(value=PERMISSIONS.get('naked_options', False))
+        self.statistics_permitted = tk.BooleanVar(value=PERMISSIONS.get('statistics', False))
+        self.graphics_permitted = tk.BooleanVar(value=PERMISSIONS.get('graphics', False))
+        self.califications_permitted = tk.BooleanVar(value=PERMISSIONS.get('califications', False))
+        self.price_multiplier_permitted = tk.BooleanVar(
+            value=PERMISSIONS.get('price_multiplier', False)
+        )
+        self.top_trace_id = None
+        self.bottom_trace_id = None
 
         self.window = tk.Toplevel(parent)
         self.window.title("Advanced Options")
         self.window.geometry("700x600")
+        self.window.protocol('WM_DELETE_WINDOW', self.on_close)
 
         # Crear notebook con pestañas
         self.notebook = ttk.Notebook(self.window)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # PESTAÑA 1: Búsqueda
         search_frame_main = tk.Frame(self.notebook)
         self.notebook.add(search_frame_main, text="🔍 Búsqueda")
 
-        search_frame = tk.LabelFrame(search_frame_main, text="Buscador Inteligente",
-                                     font=('Segoe UI', 11, 'bold'), padx=10, pady=10)
-        search_frame.pack(fill=tk.X, padx=10, pady=10)
+        search_frame = ttk.LabelFrame(search_frame_main, text="Buscador Inteligente",
+                          padding=10, style='Panel.TLabelframe')
+        search_frame.pack(fill=tk.X, padx=5, pady=5)
 
         tk.Label(search_frame, text="Buscar item:").pack(side=tk.LEFT, padx=5)
         self.search_var = tk.StringVar()
@@ -885,13 +708,14 @@ class AdvancedOptionsWindow:
         search_entry.pack(side=tk.LEFT, padx=5)
         search_entry.bind('<KeyRelease>', self.on_search_change)
 
-        search_btn = tk.Button(search_frame, text="Buscar", command=self.perform_search)
+        search_btn = ttk.Button(search_frame, text="Buscar", command=self.perform_search,
+                    style='Primary.TButton')
         search_btn.pack(side=tk.LEFT, padx=5)
 
         # Frame para resultados de búsqueda
-        results_frame = tk.LabelFrame(search_frame_main, text="Resultados",
-                                      font=('Segoe UI', 10), padx=10, pady=10)
-        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        results_frame = ttk.LabelFrame(search_frame_main, text="Resultados",
+                           padding=10, style='Panel.TLabelframe')
+        results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Listbox con scrollbar
         scrollbar = tk.Scrollbar(results_frame)
@@ -915,16 +739,15 @@ class AdvancedOptionsWindow:
         stats_buttons_frame = tk.Frame(stats_frame_main)
         stats_buttons_frame.pack(pady=20)
 
-        stats_btn = tk.Button(stats_buttons_frame, text="Ver Estadísticas Generales",
-                             command=self.show_stats,
-                             bg="#4CAF50", fg="white", padx=10, pady=10, font=('Segoe UI', 11))
-        stats_btn.pack(side=tk.LEFT, padx=10)
+        stats_btn = ttk.Button(stats_buttons_frame, text="Ver Estadísticas Generales",
+                       command=self.show_stats, style='Success.TButton')
+        stats_btn.pack(side=tk.LEFT, padx=5)
 
-        rating_stats_btn = tk.Button(stats_buttons_frame, text="Ver Estadísticas de Calificaciones",
-                                    command=self.show_rating_statistics,
-                                    bg="#9C27B0", fg="white", padx=10, pady=10,
-                                    font=('Segoe UI', 11))
-        rating_stats_btn.pack(side=tk.LEFT, padx=10)
+        rating_stats_btn = ttk.Button(stats_buttons_frame,
+                                      text="Ver Estadísticas de Calificaciones",
+                                      command=self.show_rating_statistics,
+                                      style='Info.TButton')
+        rating_stats_btn.pack(side=tk.LEFT, padx=5)
 
         # Guardar referencias a los botones de estadísticas
         self.stats_btn = stats_btn
@@ -939,22 +762,21 @@ class AdvancedOptionsWindow:
 
         # Frame para botones
         buttons_frame = tk.Frame(graphics_frame_main)
-        buttons_frame.pack(pady=20)
+        buttons_frame.pack(pady=5)
 
-        graphics_btn = tk.Button(buttons_frame, text="Ver Gráficos Generales",
-                                command=self.show_graphics,
-                                bg="#2196F3", fg="white", padx=10, pady=10, font=('Segoe UI', 11))
-        graphics_btn.pack(side=tk.LEFT, padx=10)
+        graphics_btn = ttk.Button(buttons_frame, text="Ver Gráficos Generales",
+                      command=self.show_graphics, style='Info.TButton')
+        graphics_btn.pack(side=tk.LEFT, padx=5)
 
-        rated_btn = tk.Button(buttons_frame, text="Ver Combinaciones Calificadas",
-                             command=self.show_rated_combinations,
-                             bg="#FF9800", fg="white", padx=10, pady=10, font=('Segoe UI', 11))
-        rated_btn.pack(side=tk.LEFT, padx=10)
+        rated_btn = ttk.Button(buttons_frame, text="Ver Combinaciones Calificadas",
+                       command=self.show_rated_combinations,
+                       style='Warning.TButton')
+        rated_btn.pack(side=tk.LEFT, padx=5)
 
-        prices_btn = tk.Button(buttons_frame, text="Ver Precios por Combinación",
-                              command=self.show_prices_by_combination,
-                              bg="#E91E63", fg="white", padx=10, pady=10, font=('Segoe UI', 11))
-        prices_btn.pack(side=tk.LEFT, padx=10)
+        prices_btn = ttk.Button(buttons_frame, text="Ver Precios por Combinación",
+                    command=self.show_prices_by_combination,
+                    style='Danger.TButton')
+        prices_btn.pack(side=tk.LEFT, padx=5)
 
         # Guardar referencias a los botones para habilitar/deshabilitar
         self.graphics_btn = graphics_btn
@@ -965,116 +787,282 @@ class AdvancedOptionsWindow:
         self.update_graph_buttons_state()
 
         # Frame para checkbuttons de categorías
-        filter_frame = tk.LabelFrame(graphics_frame_main, text="Filtrar por Categoría",
-                                     font=('Segoe UI', 10, 'bold'), padx=10, pady=10)
-        filter_frame.pack(fill=tk.X, padx=10, pady=10)
+        filter_frame = ttk.LabelFrame(graphics_frame_main, text="Filtrar por Categoría",
+                          padding=10, style='Panel.TLabelframe')
+        filter_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Crear checkbuttons para cada categoría
-        self.favorite_check = tk.Checkbutton(filter_frame, text="Favorito",
-                                            variable=self.show_favorite_var,
-                                            command=self.update_graph_buttons_state)
-        self.favorite_check.pack(side=tk.LEFT, padx=10)
+        self.favorite_check = ttk.Checkbutton(filter_frame, text="Favorito",
+                              variable=self.show_favorite_var,
+                              command=self.update_graph_buttons_state,
+                              style='Subtle.TCheckbutton')
+        self.favorite_check.pack(side=tk.LEFT, padx=5)
 
-        self.normal_check = tk.Checkbutton(filter_frame, text="Normal",
-                                          variable=self.show_normal_var,
-                                          command=self.update_graph_buttons_state)
-        self.normal_check.pack(side=tk.LEFT, padx=10)
+        self.normal_check = ttk.Checkbutton(filter_frame, text="Normal",
+                            variable=self.show_normal_var,
+                            command=self.update_graph_buttons_state,
+                            style='Subtle.TCheckbutton')
+        self.normal_check.pack(side=tk.LEFT, padx=5)
 
-        self.rare_check = tk.Checkbutton(filter_frame, text="Raro",
-                                        variable=self.show_rare_var,
-                                        command=self.update_graph_buttons_state)
-        self.rare_check.pack(side=tk.LEFT, padx=10)
+        self.rare_check = ttk.Checkbutton(filter_frame, text="Raro",
+                          variable=self.show_rare_var,
+                          command=self.update_graph_buttons_state,
+                          style='Subtle.TCheckbutton')
+        self.rare_check.pack(side=tk.LEFT, padx=5)
 
-        self.incompatible_check = tk.Checkbutton(filter_frame, text="Incompatible",
-                                                 variable=self.show_incompatible_var,
-                                                 command=self.update_graph_buttons_state)
-        self.incompatible_check.pack(side=tk.LEFT, padx=10)
+        self.incompatible_check = ttk.Checkbutton(filter_frame, text="Incompatible",
+                              variable=self.show_incompatible_var,
+                              command=self.update_graph_buttons_state,
+                              style='Subtle.TCheckbutton')
+        self.incompatible_check.pack(side=tk.LEFT, padx=5)
 
         # Inicializar estado de botones
         self.update_graph_buttons_state()
 
-        # PESTAÑA 5: Permisos
+        self.panel_background = ttk.Style(self.window).lookup('Panel.TLabelframe', 'background')
+        if not self.panel_background:
+            self.panel_background = THEMES['light']['frame']
+
+        if self.price_multiplier_enabled_var is None:
+            self.price_multiplier_enabled_var = tk.BooleanVar(
+                value=PERMISSIONS.get('price_multiplier', False)
+            )
+        if self.price_multiplier_var is None:
+            self.price_multiplier_var = tk.StringVar(value='100')
+
+        multiplier_var = self.price_multiplier_var
+
+        # PESTAÑA 5: Multiplicador
+        multiplier_tab = tk.Frame(self.notebook)
+        self.notebook.add(multiplier_tab, text="📐 Multiplicador")
+
+        multiplier_panel = ttk.LabelFrame(
+            multiplier_tab,
+            text="Ajuste del Factor Multiplicador",
+            padding=15,
+            style='Panel.TLabelframe',
+        )
+        multiplier_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        multiplier_intro = tk.Label(
+            multiplier_panel,
+            text=(
+                "Modifica el porcentaje aplicado a los precios mostrados. "
+                "La autorización para usarlo se mantiene en la pestaña Permisos."
+            ),
+            font=('Segoe UI', 10),
+            bg=self.panel_background,
+            justify=tk.LEFT,
+            wraplength=540,
+        )
+        multiplier_intro.pack(anchor=tk.W, pady=(0, 12))
+
+        multiplier_controls = tk.Frame(multiplier_panel, bg=self.panel_background)
+        multiplier_controls.pack(anchor=tk.CENTER, pady=(6, 8))
+
+        self.multiplier_up_btn = ttk.Button(
+            multiplier_controls,
+            text='▲ 5%',
+            command=lambda: self.adjust_multiplier(5),
+            style='Secondary.TButton',
+            state=tk.DISABLED,
+        )
+        self.multiplier_up_btn.pack(pady=(0, 8))
+
+        entry_row = tk.Frame(multiplier_controls, bg=self.panel_background)
+        entry_row.pack()
+
+        self.multiplier_entry = tk.Entry(entry_row, textvariable=multiplier_var,
+                                         width=8, font=('Segoe UI', 10), justify=tk.CENTER,
+                                         state=tk.DISABLED)
+        self.multiplier_entry.pack(side=tk.LEFT)
+        self.multiplier_entry.bind('<Return>', self.on_multiplier_entry_commit)
+        self.multiplier_entry.bind('<FocusOut>', self.on_multiplier_entry_commit)
+
+        tk.Label(entry_row, text="%", bg=self.panel_background,
+                 font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=(6, 0))
+
+        self.multiplier_down_btn = ttk.Button(
+            multiplier_controls,
+            text='▼ 5%',
+            command=lambda: self.adjust_multiplier(-5),
+            style='Secondary.TButton',
+            state=tk.DISABLED,
+        )
+        self.multiplier_down_btn.pack(pady=(8, 0))
+
+        self.multiplier_help_label = tk.Label(
+            multiplier_panel,
+            text=(
+                "Por defecto 100%. Activa el permiso del factor multiplicador en la pestaña "
+                "Permisos para poder editar este valor."
+            ),
+            font=('Segoe UI', 9, 'italic'),
+            fg='#7a7a7a',
+            bg=self.panel_background,
+            justify=tk.LEFT,
+            wraplength=520,
+        )
+        self.multiplier_help_label.pack(anchor=tk.W, pady=(8, 0))
+
+        preset_panel = ttk.LabelFrame(
+            multiplier_panel,
+            text="Ajustes predefinidos",
+            padding=10,
+            style='Panel.TLabelframe',
+        )
+        preset_panel.pack(fill=tk.X, pady=(14, 0))
+
+        preset_intro = tk.Label(
+            preset_panel,
+            text=(
+                "Selecciona un modo para aplicar automáticamente el factor y las reglas "
+                "especiales del selector principal."
+            ),
+            font=('Segoe UI', 9),
+            bg=self.panel_background,
+            justify=tk.LEFT,
+            wraplength=520,
+        )
+        preset_intro.pack(anchor=tk.W, pady=(0, 8))
+
+        if self.outfit_preset_var is None:
+            self.outfit_preset_var = tk.StringVar(value='yoga')
+
+        preset_options = [
+            ('Dance', 'dance'),
+            ('Sexy Dance', 'sexy_dance'),
+            ('Yoga', 'yoga'),
+            ('Adv Yoga', 'adv_yoga'),
+            ('Crazy', 'crazy'),
+        ]
+        preset_change_handler = self.on_preset_change or (lambda _preset: None)
+
+        for label, value in preset_options:
+            preset_radio = ttk.Radiobutton(
+                preset_panel,
+                text=label,
+                value=value,
+                variable=self.outfit_preset_var,
+                command=lambda preset_value=value: preset_change_handler(preset_value),
+                style='Subtle.TRadiobutton',
+            )
+            preset_radio.pack(anchor=tk.W, pady=2)
+
+        # PESTAÑA 6: Permisos
         permissions_frame_main = tk.Frame(self.notebook)
         self.notebook.add(permissions_frame_main, text="🔐 Permisos")
 
-        permissions_frame = tk.LabelFrame(permissions_frame_main,
-                                          text="Controlar Acceso a Funciones",
-                                          font=('Segoe UI', 11, 'bold'), padx=15, pady=15)
-        permissions_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        permissions_frame = ttk.LabelFrame(permissions_frame_main,
+                           text="Controlar Acceso a Funciones",
+                           padding=15, style='Panel.TLabelframe')
+        permissions_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        display_frame = ttk.LabelFrame(permissions_frame, text="Display",
+                           padding=10, style='Panel.TLabelframe')
+        display_frame.pack(anchor=tk.W, fill=tk.X, padx=20, pady=(0, 6))
+
+        if self.show_prices_var is not None:
+            self.show_prices_check = ttk.Checkbutton(
+                display_frame,
+                text="Show individual prices",
+                variable=self.show_prices_var,
+                command=self.on_display_change or (lambda: None),
+                style='Subtle.TCheckbutton',
+            )
+            self.show_prices_check.pack(anchor=tk.W)
+
+        self.price_multiplier_check = ttk.Checkbutton(
+            display_frame,
+            text="Permitir variar el factor multiplicador",
+            variable=self.price_multiplier_enabled_var,
+            command=self.on_multiplier_permission_changed,
+            style='Subtle.TCheckbutton',
+            state=tk.DISABLED,
+        )
+        self.price_multiplier_check.pack(anchor=tk.W, pady=(4, 0))
+
+        self.naked_check = ttk.Checkbutton(
+            display_frame,
+            text="Permitir opciones plus",
+            variable=self.naked_options_permitted,
+            command=self.on_permissions_changed,
+            style='Subtle.TCheckbutton',
+        )
+        self.naked_check.pack(anchor=tk.W, pady=(4, 0))
 
         # SECCIÓN 1: Autenticación por contraseña (siempre rechaza)
-        auth_frame = tk.LabelFrame(permissions_frame, text="Autenticación de Permisos",
-                                   font=('Segoe UI', 10, 'bold'), padx=10, pady=10,
-                                   fg='#333333')
-        auth_frame.pack(anchor=tk.W, fill=tk.X, padx=20, pady=(0, 20))
+        auth_frame = ttk.LabelFrame(permissions_frame, text="Autenticación de Permisos",
+                        padding=10, style='Panel.TLabelframe')
+        auth_frame.pack(anchor=tk.W, fill=tk.X, padx=20, pady=(0, 10))
 
         tk.Label(auth_frame, text="Contraseña (10 dígitos):",
-                 font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+             font=('Segoe UI', 9), bg=self.panel_background).pack(anchor=tk.W, pady=(0, 5))
 
-        password_input_frame = tk.Frame(auth_frame)
-        password_input_frame.pack(anchor=tk.W, fill=tk.X, pady=(0, 10))
+        password_input_frame = tk.Frame(auth_frame, bg=self.panel_background)
+        password_input_frame.pack(anchor=tk.W, fill=tk.X, pady=(0, 5))
 
         self.password_var = tk.StringVar()
         password_entry = tk.Entry(password_input_frame, textvariable=self.password_var,
                                   show="•", width=20, font=('Segoe UI', 10))
         password_entry.pack(side=tk.LEFT, padx=(0, 10))
 
-        verify_btn = tk.Button(password_input_frame, text="Ver Acceso",
-                              command=self.verify_password,
-                              bg="#FF6B6B", fg="white", padx=15, pady=5,
-                              font=('Segoe UI', 9, 'bold'))
+        verify_btn = ttk.Button(password_input_frame, text="Ver Acceso",
+                    command=self.verify_password, style='Danger.TButton')
         verify_btn.pack(side=tk.LEFT)
 
         # Label de instrucción antigua (ahora es para el método glitter)
         instruction_label = tk.Label(permissions_frame,
                                      text="Selecciona 'X' para desbloquear los permisos",
                                      font=('Segoe UI', 9, 'italic'),
-                                     fg='#2196F3', bg=permissions_frame.cget('bg'))
-        instruction_label.pack(anchor=tk.W, padx=20, pady=(10, 15), fill=tk.X)
-
-        # Checkbutton para Naked Options
-        self.naked_check = tk.Checkbutton(permissions_frame, text="Permitir Opciones Naked",
-                                         variable=self.naked_options_permitted,
-                                         command=self.on_permissions_changed,
-                                         font=('Segoe UI', 10),
-                                         justify=tk.LEFT, state=tk.DISABLED)
-        self.naked_check.pack(anchor=tk.W, padx=20, pady=10, fill=tk.X)
+                                     fg='#2196F3', bg=self.panel_background)
+        instruction_label.pack(anchor=tk.W, padx=20, pady=(2, 5), fill=tk.X)
 
         # Checkbutton para Statistics
-        self.stats_check = tk.Checkbutton(permissions_frame, text="Permitir Estadísticas",
-                                         variable=self.statistics_permitted,
-                                         command=self.on_permissions_changed,
-                                         font=('Segoe UI', 10),
-                                         justify=tk.LEFT, state=tk.DISABLED)
-        self.stats_check.pack(anchor=tk.W, padx=20, pady=10, fill=tk.X)
+        self.stats_check = ttk.Checkbutton(permissions_frame, text="Permitir Estadísticas",
+                           variable=self.statistics_permitted,
+                           command=self.on_permissions_changed,
+                           style='Subtle.TCheckbutton', state=tk.DISABLED)
+        self.stats_check.pack(anchor=tk.W, padx=20, pady=5, fill=tk.X)
 
         # Checkbutton para Graphics
-        self.graphics_check = tk.Checkbutton(permissions_frame, text="Permitir Gráficos",
-                                            variable=self.graphics_permitted,
-                                            command=self.on_permissions_changed,
-                                            font=('Segoe UI', 10),
-                                            justify=tk.LEFT, state=tk.DISABLED)
-        self.graphics_check.pack(anchor=tk.W, padx=20, pady=10, fill=tk.X)
+        self.graphics_check = ttk.Checkbutton(permissions_frame, text="Permitir Gráficos",
+                              variable=self.graphics_permitted,
+                              command=self.on_permissions_changed,
+                              style='Subtle.TCheckbutton', state=tk.DISABLED)
+        self.graphics_check.pack(anchor=tk.W, padx=20, pady=5, fill=tk.X)
 
         # Checkbutton para Califications
-        self.calif_check = tk.Checkbutton(permissions_frame, text="Permitir Calificaciones",
-                                         variable=self.califications_permitted,
-                                         command=self.on_permissions_changed,
-                                         font=('Segoe UI', 10),
-                                         justify=tk.LEFT, state=tk.DISABLED)
-        self.calif_check.pack(anchor=tk.W, padx=20, pady=10, fill=tk.X)
+        self.calif_check = ttk.Checkbutton(permissions_frame, text="Permitir Calificaciones",
+                           variable=self.califications_permitted,
+                           command=self.on_permissions_changed,
+                           style='Subtle.TCheckbutton', state=tk.DISABLED)
+        self.calif_check.pack(anchor=tk.W, padx=20, pady=5, fill=tk.X)
 
         # Vincular verificación de permisos a los comboboxes si están disponibles
         if self.top_var and self.bottom_var:
-            self.top_var.trace('w', self.verify_permissions)
-            self.bottom_var.trace('w', self.verify_permissions)
+            self.top_trace_id = self.top_var.trace_add('write', self.verify_permissions)
+            self.bottom_trace_id = self.bottom_var.trace_add('write', self.verify_permissions)
+
+        self.update_multiplier_controls_state()
+        self.verify_permissions()
+
+    def on_close(self):
+        """Cerrar la ventana liberando los traces de las variables compartidas."""
+        if self.top_var is not None and self.top_trace_id is not None:
+            self.top_var.trace_remove('write', self.top_trace_id)
+            self.top_trace_id = None
+        if self.bottom_var is not None and self.bottom_trace_id is not None:
+            self.bottom_var.trace_remove('write', self.bottom_trace_id)
+            self.bottom_trace_id = None
+        self.window.destroy()
 
     def create_ratings_tab(self, parent):
         """Crear pestaña de calificaciones."""
         # Frame para selección de combinación
-        combo_frame = tk.LabelFrame(parent, text="Seleccionar Combinación",
-                                    font=('Segoe UI', 10, 'bold'), padx=10, pady=10)
-        combo_frame.pack(fill=tk.X, padx=10, pady=10)
+        combo_frame = ttk.LabelFrame(parent, text="Seleccionar Combinación",
+                         padding=10, style='Panel.TLabelframe')
+        combo_frame.pack(fill=tk.X, padx=5, pady=5)
 
         tk.Label(combo_frame, text="Top:").grid(row=0, column=0, sticky=tk.W, padx=5)
         top_names = [t['nombre'] for t in filter_items_by_permissions(self.tops)]
@@ -1090,41 +1078,76 @@ class AdvancedOptionsWindow:
                                    values=bottom_names, state='readonly', width=30)
         self.rating_bottom_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
 
+        current_rating_frame = ttk.LabelFrame(parent, text="Calificación actual",
+                              padding=10, style='Panel.TLabelframe')
+        current_rating_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        self.current_rating_status_var = tk.StringVar(value='Unrated')
+        self.current_rating_status_label = tk.Label(
+            current_rating_frame,
+            textvariable=self.current_rating_status_var,
+            font=('Segoe UI', 10, 'bold'),
+            anchor='w',
+            justify=tk.LEFT,
+        )
+        self.current_rating_status_label.pack(anchor=tk.W)
+
+        self.rating_top_combo.bind('<<ComboboxSelected>>', self.on_rating_selection_changed)
+        self.rating_bottom_combo.bind('<<ComboboxSelected>>', self.on_rating_selection_changed)
+
         # Frame para calificaciones
-        rating_frame = tk.LabelFrame(parent, text="Calificación",
-                                    font=('Segoe UI', 10, 'bold'), padx=10, pady=10)
-        rating_frame.pack(fill=tk.X, padx=10, pady=10)
+        rating_frame = ttk.LabelFrame(parent, text="Calificación",
+                          padding=10, style='Panel.TLabelframe')
+        rating_frame.pack(fill=tk.X, padx=5, pady=5)
 
         self.rating_var = tk.StringVar(value='unrated')
 
         ratings_options = [
-            ('⭐ Favorito', 'favorite', '#4A9EFF'),
-            ('✓ Normal', 'normal', '#4CAF50'),
-            ('◆ Raro', 'rare', '#FF9800'),
-            ('✗ Incompatible', 'incompatible', '#f44336'),
-            ('Sin calificación', 'unrated', '#cccccc'),
+            ('⭐ Favorite', 'favorite'),
+            ('✓ Normal', 'normal'),
+            ('◆ Not common', 'rare'),
+            ('✗ Incompatible', 'incompatible'),
+            ('Unrated', 'unrated'),
         ]
 
-        for label, value, color in ratings_options:
-            rb = tk.Radiobutton(rating_frame, text=label, variable=self.rating_var,
-                               value=value, bg=color if value != 'unrated' else '#f0f0f0',
-                               fg='white' if value != 'unrated' else 'black',
-                               font=('Segoe UI', 10), padx=20, pady=8)
+        for label, value in ratings_options:
+            rb = ttk.Radiobutton(rating_frame, text=label, variable=self.rating_var,
+                                 value=value, style='Subtle.TRadiobutton')
             rb.pack(anchor=tk.W, pady=3)
 
         # Botones
         button_frame = tk.Frame(parent)
-        button_frame.pack(fill=tk.X, padx=10, pady=15)
+        button_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        save_btn = tk.Button(button_frame, text="💾 Guardar Calificación",
-                           command=self.save_rating,
-                           bg="#4CAF50", fg="white", padx=15, pady=5, font=('Segoe UI', 10))
+        save_btn = ttk.Button(button_frame, text="💾 Guardar Calificación",
+                      command=self.save_rating, style='Success.TButton')
         save_btn.pack(side=tk.LEFT, padx=5)
 
-        load_btn = tk.Button(button_frame, text="🔄 Cargar",
-                           command=self.load_rating,
-                           bg="#2196F3", fg="white", padx=15, pady=5, font=('Segoe UI', 10))
+        load_btn = ttk.Button(button_frame, text="🔄 Cargar",
+                      command=self.load_rating, style='Info.TButton')
         load_btn.pack(side=tk.LEFT, padx=5)
+
+        self.refresh_current_rating_status()
+
+    def refresh_current_rating_status(self):
+        """Actualizar el label con la calificación guardada de la combinación seleccionada."""
+        if not hasattr(self, 'rating_top_var') or not hasattr(self, 'rating_bottom_var'):
+            return
+
+        top = self.rating_top_var.get()
+        bottom = self.rating_bottom_var.get()
+
+        if not top or not bottom:
+            self.current_rating_status_var.set('Unrated')
+            return
+
+        rating = get_combination_rating(self.ratings, top, bottom)
+        label_text, _ = RATING_LABELS.get(rating, ('Unrated', '#cccccc'))
+        self.current_rating_status_var.set(label_text if label_text else 'Unrated')
+
+    def on_rating_selection_changed(self, _event=None):
+        """Refrescar la calificación visible al cambiar la combinación seleccionada."""
+        self.refresh_current_rating_status()
 
     def load_rating(self):
         """Cargar la calificación de la combinación seleccionada."""
@@ -1136,6 +1159,7 @@ class AdvancedOptionsWindow:
 
         rating = get_combination_rating(self.ratings, top, bottom)
         self.rating_var.set(rating)
+        self.refresh_current_rating_status()
 
     def save_rating(self):
         """Guardar la calificación de la combinación seleccionada."""
@@ -1155,43 +1179,47 @@ class AdvancedOptionsWindow:
             return
 
         set_combination_rating(self.ratings, top, bottom, rating)
+        self.refresh_current_rating_status()
         label_text, _ = RATING_LABELS[rating]
         messagebox.askokcancel("Guardado", f"Combinación guardada como: {label_text}")
 
     def verify_permissions(self, *args):
         """Verificar si glitter bra y glitter panties están seleccionados."""
+        _ = args
         if not self.top_var or not self.bottom_var:
             return
 
-        # Verificar si los checkbuttons aún existen (en caso de que la ventana se haya cerrado)
-        if not self.naked_check.winfo_exists():
+        # Verificar si los checkbuttons protegidos aún existen
+        if not self.stats_check.winfo_exists():
             return
 
         top_selected = self.top_var.get()
         bottom_selected = self.bottom_var.get()
+        protected_combo_unlocked = (
+            top_selected == 'glitter bra' and bottom_selected == 'glitter panties'
+        )
 
-        # Habilitar permisos solo si están seleccionados glitter bra y glitter panties
-        if top_selected == 'glitter bra' and bottom_selected == 'glitter panties':
-            # Desbloquear todos los checkbuttons
-            self.naked_check.config(state=tk.NORMAL)
-            self.stats_check.config(state=tk.NORMAL)
-            self.graphics_check.config(state=tk.NORMAL)
-            self.calif_check.config(state=tk.NORMAL)
-        else:
-            # Bloquear todos los checkbuttons
-            self.naked_check.config(state=tk.DISABLED)
-            self.stats_check.config(state=tk.DISABLED)
-            self.graphics_check.config(state=tk.DISABLED)
-            self.calif_check.config(state=tk.DISABLED)
-            # Desmarca los permisos si están bloqueados
-            self.naked_options_permitted.set(False)
-            self.statistics_permitted.set(False)
-            self.graphics_permitted.set(False)
-            self.califications_permitted.set(False)
-            PERMISSIONS['naked_options'] = False
-            PERMISSIONS['statistics'] = False
-            PERMISSIONS['graphics'] = False
-            PERMISSIONS['califications'] = False
+        self.stats_check.config(
+            state=tk.NORMAL if protected_combo_unlocked or self.statistics_permitted.get()
+            else tk.DISABLED
+        )
+        self.graphics_check.config(
+            state=tk.NORMAL if protected_combo_unlocked or self.graphics_permitted.get()
+            else tk.DISABLED
+        )
+        self.calif_check.config(
+            state=tk.NORMAL if protected_combo_unlocked or self.califications_permitted.get()
+            else tk.DISABLED
+        )
+        multiplier_active = (
+            self.price_multiplier_enabled_var.get()
+            if self.price_multiplier_enabled_var is not None
+            else False
+        )
+        self.price_multiplier_check.config(
+            state=tk.NORMAL if protected_combo_unlocked or multiplier_active else tk.DISABLED
+        )
+        self.update_multiplier_controls_state()
 
     def on_permissions_changed(self):
         """Actualizar PERMISSIONS cuando cambia el estado de cualquier checkbox de permisos."""
@@ -1199,6 +1227,11 @@ class AdvancedOptionsWindow:
         PERMISSIONS['statistics'] = self.statistics_permitted.get()
         PERMISSIONS['graphics'] = self.graphics_permitted.get()
         PERMISSIONS['califications'] = self.califications_permitted.get()
+        PERMISSIONS['price_multiplier'] = (
+            self.price_multiplier_enabled_var.get()
+            if self.price_multiplier_enabled_var is not None
+            else False
+        )
 
         # Actualizar estado de botones según permisos
         self.update_statistics_buttons_state()
@@ -1206,6 +1239,63 @@ class AdvancedOptionsWindow:
 
         # Actualizar los comboboxes de la ventana principal si están disponibles
         self.update_main_window_combos()
+        self.verify_permissions()
+
+    def get_price_multiplier_percentage(self) -> float:
+        """Return the currently active percentage multiplier."""
+        if self.price_multiplier_var is None:
+            return 100.0
+        try:
+            value = float(self.price_multiplier_var.get().replace(',', '.'))
+        except (AttributeError, ValueError):
+            return 100.0
+        return max(0.0, value)
+
+    def update_multiplier_controls_state(self):
+        """Enable or disable multiplier editing controls based on permission state."""
+        assert self.price_multiplier_enabled_var is not None
+        can_edit = (
+            self.price_multiplier_check.instate(('!disabled',))
+            and self.price_multiplier_enabled_var.get()
+        )
+        entry_state = tk.NORMAL if can_edit else tk.DISABLED
+        button_state = tk.NORMAL if can_edit else tk.DISABLED
+        self.multiplier_entry.config(state=entry_state)
+        self.multiplier_down_btn.config(state=button_state)
+        self.multiplier_up_btn.config(state=button_state)
+        if self.on_display_change:
+            self.on_display_change()
+
+    def on_multiplier_permission_changed(self):
+        """Sync multiplier permission and refresh dependent UI."""
+        assert self.price_multiplier_enabled_var is not None
+        PERMISSIONS['price_multiplier'] = self.price_multiplier_enabled_var.get()
+        self.verify_permissions()
+        self.update_multiplier_controls_state()
+
+    def on_multiplier_entry_commit(self, _event=None):
+        """Validate and apply a manually entered multiplier percentage."""
+        assert self.price_multiplier_var is not None
+        try:
+            value = float(self.price_multiplier_var.get().replace(',', '.'))
+        except ValueError:
+            self.price_multiplier_var.set('100')
+            value = 100.0
+
+        normalized = max(0.0, value)
+        self.price_multiplier_var.set(f'{normalized:.0f}' if normalized.is_integer(
+            ) else f'{normalized:.2f}')
+        if self.on_display_change:
+            self.on_display_change()
+
+    def adjust_multiplier(self, delta: float):
+        """Adjust the multiplier percentage in 5% steps."""
+        assert self.price_multiplier_var is not None
+        value = self.get_price_multiplier_percentage() + delta
+        value = max(0.0, value)
+        self.price_multiplier_var.set(f'{value:.0f}' if value.is_integer() else f'{value:.2f}')
+        if self.on_display_change:
+            self.on_display_change()
 
     def update_main_window_combos(self):
         """Actualizar los valores de los comboboxes de la ventana principal
@@ -1213,9 +1303,14 @@ class AdvancedOptionsWindow:
         if not self.top_combo or not self.bottom_combo or not self.top_var or not self.bottom_var:
             return
 
-        # Recalcular las listas de items según los permisos actuales
-        new_top_names = [t['nombre'] for t in filter_items_by_permissions(self.tops)]
-        new_bottom_names = [b['nombre'] for b in filter_items_by_permissions(self.bottoms)]
+        if self.main_item_names_provider is not None:
+            new_top_names, new_bottom_names = self.main_item_names_provider()
+        else:
+            new_top_names = [t['nombre'] for t in filter_items_by_permissions(self.tops)]
+            new_bottom_names = [b['nombre'] for b in filter_items_by_permissions(self.bottoms)]
+
+        rating_top_names = [t['nombre'] for t in filter_items_by_permissions(self.tops)]
+        rating_bottom_names = [b['nombre'] for b in filter_items_by_permissions(self.bottoms)]
 
         # Obtener los valores actuales seleccionados
         current_top = self.top_var.get()
@@ -1247,17 +1342,17 @@ class AdvancedOptionsWindow:
                 current_rating_top = self.rating_top_var.get()
                 current_rating_bottom = self.rating_bottom_var.get()
 
-                self.rating_top_combo['values'] = new_top_names
-                self.rating_bottom_combo['values'] = new_bottom_names
+                self.rating_top_combo['values'] = rating_top_names
+                self.rating_bottom_combo['values'] = rating_bottom_names
 
-                if current_rating_top not in new_top_names and new_top_names:
-                    self.rating_top_var.set(new_top_names[0])
-                elif not new_top_names:
+                if current_rating_top not in rating_top_names and rating_top_names:
+                    self.rating_top_var.set(rating_top_names[0])
+                elif not rating_top_names:
                     self.rating_top_var.set('')
 
-                if current_rating_bottom not in new_bottom_names and new_bottom_names:
-                    self.rating_bottom_var.set(new_bottom_names[0])
-                elif not new_bottom_names:
+                if current_rating_bottom not in rating_bottom_names and rating_bottom_names:
+                    self.rating_bottom_var.set(rating_bottom_names[0])
+                elif not rating_bottom_names:
                     self.rating_bottom_var.set('')
             except tk.TclError:
                 # La ventana fue cerrada, salir silenciosamente
@@ -1339,7 +1434,8 @@ class AdvancedOptionsWindow:
             allowed_ratings.append('incompatible')
 
         show_rated_combinations_graph(self.window, self.ratings, self.tops,
-                                      self.bottoms, allowed_ratings)
+                                      self.bottoms, allowed_ratings,
+                                      self.get_price_multiplier_percentage())
 
     def show_prices_by_combination(self):
         """Mostrar gráfico de barras de precios por combinación."""
@@ -1354,7 +1450,8 @@ class AdvancedOptionsWindow:
             allowed_ratings.append('incompatible')
 
         show_prices_by_combination_graph(self.window, self.ratings, self.tops,
-                                         self.bottoms, allowed_ratings)
+                                         self.bottoms, allowed_ratings,
+                                         self.get_price_multiplier_percentage())
 
     def update_graph_buttons_state(self):
         """Habilitar/deshabilitar botones de gráfico según permiso y categorías seleccionadas."""
@@ -1393,17 +1490,10 @@ class AdvancedOptionsWindow:
 
 def main():
     """ Main function to run the outfit price calculator GUI. """
-    # Determinar la ruta base: funciona tanto con .py como con .exe
-    if getattr(sys, 'frozen', False):
-        # Se ejecuta como .exe (compilado con PyInstaller)
-        # sys._MEIPASS es el directorio temporal de PyInstaller con los archivos de datos
-        base = sys._MEIPASS
-    else:
-        # Se ejecuta como script .py
-        base = os.path.dirname(os.path.abspath(__file__))
+    base = get_runtime_base_dir()
 
-    top_csv = os.path.join(base, 'top_items.csv')
-    bottom_csv = os.path.join(base, 'bottom_items.csv')
+    top_csv = f'{base}\\top_items.csv'
+    bottom_csv = f'{base}\\bottom_items.csv'
 
     # Create CSV files with requested content if missing
     make_csv_if_missing(top_csv, DEFAULT_TOP_ITEMS)
@@ -1415,6 +1505,7 @@ def main():
     root = tk.Tk()
     root.title('Outfit Price Calculator')
     root.geometry(f'{WINDOW_WIDTH}x{WINDOW_HEIGHT}')
+    #root.minsize(940, 820)
 
     style = ttk.Style()
     try:
@@ -1422,20 +1513,37 @@ def main():
     except tk.TclError:
         pass
 
-    # Configurar estilos personalizados para Combobox (amarillo pastel con mejor contraste)
-    style.configure('Light.TCombobox',
-                    entrybackground="#E6DD8F",  # Amarillo pastel claro
-                   fieldbackground="#E6DD8F",  # Amarillo pastel claro
-                   background="#E0DEC7",
-                   foreground='#333333',       # Texto oscuro para contraste
-                   insertcolor='#333333')
+    light_theme = THEMES['light']
+    dark_theme = THEMES['dark']
 
-    style.configure('Dark.TCombobox',
-                     entrybackground='#E6D68F',  # Amarillo pastel más saturado/oscuro
-                   fieldbackground='#E6D68F',  # Amarillo pastel más saturado/oscuro
-                   background="#DBC870",
-                   foreground='#1a1a1a',       # Texto muy oscuro para buen contraste
-                   insertcolor='#1a1a1a')
+    # Configurar estilos personalizados para Combobox a partir de la paleta del tema
+    style.configure(
+        'Light.TCombobox',
+        entrybackground=light_theme['combo_fill'],
+        fieldbackground=light_theme['combo_fill'],
+        background=light_theme['combo_shell'],
+        foreground=light_theme['combo_text'],
+        insertcolor=light_theme['combo_text'],
+    )
+
+    style.configure(
+        'Dark.TCombobox',
+        entrybackground=dark_theme['combo_fill'],
+        fieldbackground=dark_theme['combo_fill'],
+        background=dark_theme['combo_shell'],
+        foreground=dark_theme['combo_text'],
+        insertcolor=dark_theme['combo_text'],
+    )
+
+    style.configure(
+        'Random.TButton',
+        font=('Segoe UI', 10, 'bold'),
+        padding=(22, 9),
+        anchor='center',
+        borderwidth=1,
+        focusthickness=1,
+        relief='flat',
+    )
 
     # Configurar estilos personalizados para Progressbar con gradiente de color
     style.configure('Green.Vertical.TProgressbar', background=COLOR_TOTAL_LOW)
@@ -1445,56 +1553,199 @@ def main():
 
     # Variable para guardar el tema actual
     current_theme = {'theme': 'light'}
+    dashboard_total_var = tk.StringVar(value='0')
+    dashboard_rating_var = tk.StringVar(value='Sin calificar')
+    dashboard_max_var = tk.StringVar(value='0')
+    dashboard_mode_var = tk.StringVar(value='Precios ocultos')
+    dashboard_multiplier_var = tk.StringVar(value='')
+    theme_state_var = tk.StringVar(value='Modo claro')
+
+    def style_surface(widget, background, border):
+        widget.config(
+            bg=background,
+            highlightbackground=border,
+            highlightcolor=border,
+            highlightthickness=1,
+            bd=0,
+        )
+
+    def configure_ttk_styles(theme_colors):
+        style.configure('TFrame', background=theme_colors['bg'])
+        style.configure('TLabel', background=theme_colors['bg'], foreground=theme_colors['text'])
+
+        style.configure(
+            'Panel.TLabelframe',
+            background=theme_colors['frame'],
+            bordercolor=theme_colors['border'],
+            lightcolor=theme_colors['border'],
+            darkcolor=theme_colors['border'],
+            relief='solid',
+            borderwidth=1,
+        )
+        style.configure(
+            'Panel.TLabelframe.Label',
+            background=theme_colors['frame'],
+            foreground=theme_colors['label'],
+            font=('Segoe UI', 10),
+        )
+
+        style.configure(
+            'Subtle.TCheckbutton',
+            background=theme_colors['frame'],
+            foreground=theme_colors['text'],
+            indicatorcolor=theme_colors['frame_elevated'],
+            padding=(4, 4),
+        )
+        style.map(
+            'Subtle.TCheckbutton',
+            background=[('active', theme_colors['frame'])],
+            foreground=[('disabled', theme_colors['text_secondary'])],
+            indicatorcolor=[('selected', theme_colors['accent'])],
+        )
+
+        style.configure(
+            'Subtle.TRadiobutton',
+            background=theme_colors['frame'],
+            foreground=theme_colors['text'],
+            indicatorcolor=theme_colors['frame_elevated'],
+            padding=(6, 6),
+        )
+        style.map(
+            'Subtle.TRadiobutton',
+            background=[('active', theme_colors['frame'])],
+            foreground=[('disabled', theme_colors['text_secondary'])],
+            indicatorcolor=[('selected', theme_colors['accent'])],
+        )
+
+        button_styles = {
+            'Primary.TButton': (theme_colors['button'], theme_colors['button_hover'],
+                                theme_colors['button_text']),
+            'Secondary.TButton': (theme_colors['bg'],
+                                  theme_colors['muted_button_hover'],
+                                  theme_colors['label']),
+            'HeroIcon.TButton': (theme_colors['accent'], theme_colors['accent_hover'],
+                                 theme_colors['hero_text']),
+            'Random.TButton': (theme_colors['random_button'],
+                               theme_colors['random_button_hover'],
+                               theme_colors['random_button_text']),
+            'Success.TButton': (theme_colors['success'], theme_colors['success_hover'], '#ffffff'),
+            'Info.TButton': (theme_colors['info'], theme_colors['info_hover'],
+                             '#ffffff'),
+            'Warning.TButton': (theme_colors['warning'], theme_colors['warning_hover'], '#ffffff'),
+            'Danger.TButton': (theme_colors['danger'], theme_colors['danger_hover'], '#ffffff'),
+        }
+
+        for style_name, (background, hover, foreground) in button_styles.items():
+            style.configure(
+                style_name,
+                background=background,
+                foreground=foreground,
+                bordercolor=background,
+                darkcolor=background,
+                lightcolor=background,
+                focuscolor=background,
+                borderwidth=0,
+                focusthickness=0,
+                relief='flat',
+                padding=(14, 8),
+                font=('Segoe UI', 10, 'bold'),
+            )
+            style.map(
+                style_name,
+                background=[('active', hover), ('pressed', hover)],
+                foreground=[('active', foreground), ('pressed', foreground)],
+                bordercolor=[('active', hover), ('pressed', hover)],
+                darkcolor=[('active', hover), ('pressed', hover)],
+                lightcolor=[('active', hover), ('pressed', hover)],
+            )
+
+        style.configure('Random.TButton', padding=(22, 9), anchor='center')
+
+    def apply_custom_theme():
+        theme_colors = THEMES[current_theme['theme']]
+        configure_ttk_styles(theme_colors)
+        root.config(bg=theme_colors['bg'])
+        frm.config(bg=theme_colors['bg'])
+        main_container.config(bg=theme_colors['bg'])
+        footer_frame.config(bg=theme_colors['bg'])
+        bar_frame.config(bg=theme_colors['bg'])
+        insights_frame.config(bg=theme_colors['bg'])
+
+        style_surface(hero_frame, theme_colors['accent'], theme_colors['accent'])
+        hero_content.config(bg=theme_colors['accent'])
+        hero_actions.config(bg=theme_colors['accent'])
+        actions_row.config(bg=theme_colors['accent'])
+        hero_title.config(bg=theme_colors['accent'], fg=theme_colors['hero_text'])
+        hero_subtitle.config(bg=theme_colors['accent'], fg=theme_colors['hero_subtext'])
+        theme_chip.config(bg=theme_colors['accent'], fg=theme_colors['hero_subtext'])
+
+        style_surface(total_frame, theme_colors['frame'], theme_colors['border'])
+        total_caption_frame.config(bg=theme_colors['frame'])
+        total_caption_label.config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+        multiplier_hint_label.config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+        total_header_frame.config(bg=theme_colors['frame'])
+        metric_cards_frame.config(bg=theme_colors['frame'])
+        price_rating_frame.config(bg=theme_colors['frame'])
+        price_display.config(bg=theme_colors['frame'])
+        combination_rating_label.config(bg=theme_colors['frame'])
+        top_names_container.config(bg=theme_colors['frame'])
+        bottom_names_container.config(bg=theme_colors['frame'])
+
+        top_selector_label.config(bg=theme_colors['frame'], fg=theme_colors['label'])
+        bottom_selector_label.config(bg=theme_colors['frame'], fg=theme_colors['label'])
+        preset_button_frame.config(bg=theme_colors['frame'])
+        refresh_preset_buttons(theme_colors)
+
+        for info_frame in (top_info_frame, bottom_info_frame):
+            info_frame.config(bg=theme_colors['frame'])
+        for info_label in (top_info_label, bottom_info_label):
+            info_label.config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+        for badge in (top_price_badge, bottom_price_badge):
+            badge.config(bg=theme_colors['frame'])
+        for dup_label in (top_dup_label, bottom_dup_label):
+            dup_label.config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+
+        for label in (
+            top_name_primary_label,
+            top_name_secondary_label,
+            bottom_name_primary_label,
+            bottom_name_secondary_label,
+        ):
+            label.config(bg=theme_colors['frame'], fg=theme_colors['text'])
+
+        style_surface(insights_panel, theme_colors['frame'], theme_colors['border'])
+        insights_title.config(bg=theme_colors['frame'], fg=theme_colors['label'])
+        details_label.config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+        max_price_label.config(bg=theme_colors['frame'], fg=theme_colors['text'])
+        quick_actions_frame.config(bg=theme_colors['frame'])
+
+        for card in dashboard_cards:
+            style_surface(card['frame'], theme_colors['frame'], theme_colors['border'])
+            card['content'].config(bg=theme_colors['frame'])
+            card['title'].config(bg=theme_colors['frame'], fg=theme_colors['text_secondary'])
+            card['value'].config(bg=theme_colors['frame'], fg=theme_colors['text'])
+
+        if current_theme['theme'] == 'light':
+            top_combo.configure(style='Light.TCombobox')
+            bottom_combo.configure(style='Light.TCombobox')
+            theme_state_var.set('light theme')
+        else:
+            top_combo.configure(style='Dark.TCombobox')
+            bottom_combo.configure(style='Dark.TCombobox')
+            theme_state_var.set('dark theme')
+
+        theme_btn.config(text='🌙' if current_theme['theme'] == 'dark' else '☀️')
+        bar_max_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
+        bar_min_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
 
     def toggle_theme():
         """Cambia entre tema claro y oscuro."""
         new_theme = 'dark' if current_theme['theme'] == 'light' else 'light'
         current_theme['theme'] = new_theme
-        theme_colors = THEMES[new_theme]
+        apply_custom_theme()
+        update_display()
 
-        # Actualizar ventana principal y frame principal
-        root.config(bg=theme_colors['bg'])
-        frm.config(bg=theme_colors['bg'])
-        main_container.config(bg=theme_colors['bg'])
-        bar_frame.config(bg=theme_colors['bg'])
-
-        # Aplicar tema a todos los widgets recursivamente
-        apply_theme_to_widgets(frm, theme_colors)
-
-        # Actualizar específicamente los frames de nombres
-        sel_frame.config(bg=theme_colors['bg'], fg=theme_colors['label'])
-        names_topframe.config(bg=theme_colors['bg'], fg=theme_colors['label'])
-        names_bottomframe.config(bg=theme_colors['bg'], fg=theme_colors['label'])
-        total_frame.config(bg=theme_colors['bg'])
-        price_rating_frame.config(bg=theme_colors['bg'])
-        combination_rating_label.config(bg=theme_colors['bg'])
-
-        # Actualizar botón Random con colores pastel según tema
-        if new_theme == 'light':
-            btn.config(bg='#E8B4D4', fg='#333333', activebackground='#D99DB8')
-            # Cambiar estilo de combobox a Light (amarillo pastel claro)
-            top_combo.configure(style='Light.TCombobox')
-            bottom_combo.configure(style='Light.TCombobox')
-        else:  # dark
-            btn.config(bg='#C9A0B3', fg="#7034fc", activebackground='#B88AA7')
-            # Cambiar estilo de combobox a Dark (amarillo pastel oscuro)
-            top_combo.configure(style='Dark.TCombobox')
-            bottom_combo.configure(style='Dark.TCombobox')
-
-        # Actualizar botón de tema con nuevo color
-        theme_btn.config(bg=theme_colors['bg'], fg=theme_colors['label'],
-                        text='🌙' if new_theme == 'dark' else '☀️',
-                        activebackground=theme_colors['frame'],
-                        activeforeground=theme_colors['label'])
-
-        # Actualizar botón de opciones avanzadas con nuevo color
-        advanced_btn.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'],
-                           activebackground=theme_colors['frame'],
-                           activeforeground=theme_colors['label'])
-
-        # Actualizar labels de la barra de precio
-        bar_max_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
-        bar_min_label.config(bg=theme_colors['bg'], fg=theme_colors['text_secondary'])
+    configure_ttk_styles(light_theme)
 
     root_bg = THEMES['light']['bg']
     root.config(bg=root_bg)
@@ -1502,35 +1753,94 @@ def main():
     # Use tk.Frame so we can control background color consistently
     # Main container with content on left and price bar on right
     main_container = tk.Frame(root, bg=root_bg)
-    main_container.pack(fill=tk.BOTH, expand=True, padx=14, pady=8)
+    main_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=5)
+
+    footer_frame = tk.Frame(root, bg=root_bg, height=FOOTER_PANEL_HEIGHT)
+    footer_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=16, pady=(0, 5))
+    footer_frame.pack_propagate(False)
 
     # Left frame for main content
     frm = tk.Frame(main_container, bg=root_bg)
     frm.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    frm.grid_columnconfigure(0, weight=1)
 
-    # Botón para cambiar de tema (esquina superior derecha) con estilo mejorado
-    theme_btn = tk.Button(root, text='☀️', font=('Segoe UI', 14),
-                          command=toggle_theme, bg=root_bg, fg='#333333',
-                          relief=tk.FLAT, bd=0, highlightthickness=0,
-                          activebackground=THEMES['light']['bg'],
-                          activeforeground='#333333')
-    theme_btn.pack(side=tk.TOP, anchor=tk.NE, padx=10, pady=5)
+    # Botón de opciones avanzadas integrado en la cabecera
+    price_multiplier_var = tk.StringVar(value='100')
+    price_multiplier_enabled_var = tk.BooleanVar(value=False)
+    outfit_preset_var = tk.StringVar(value='yoga')
+    applied_preset_state = {'value': 'yoga'}
+    preset_multiplier_map = {
+        'dance': 50,
+        'sexy_dance': 75,
+        'yoga': 100,
+        'adv_yoga': 125,
+        'crazy': 100,
+    }
 
-    # Botón de opciones avanzadas (esquina inferior izquierda)
+    def is_crazy_mode() -> bool:
+        return outfit_preset_var.get() == 'crazy'
+
+    def is_adv_yoga_mode() -> bool:
+        return outfit_preset_var.get() == 'adv_yoga'
+
+    def get_selectable_items(items: list) -> list:
+        allow_plus_items = PERMISSIONS.get('naked_options', False) or is_crazy_mode()
+        filtered_items = items if allow_plus_items else [
+            item for item in items if item.get('categoria', '').lower() != 'naked'
+        ]
+        if is_crazy_mode():
+            filtered_items = [
+                item for item in filtered_items if float(item.get('precio', 0)) >= 200
+            ]
+        elif is_adv_yoga_mode():
+            filtered_items = [
+                item for item in filtered_items if float(item.get('precio', 0)) >= 100
+            ]
+        return filtered_items
+
+    def get_main_item_names() -> tuple[list[str], list[str]]:
+        return (
+            [item['nombre'] for item in get_selectable_items(tops)],
+            [item['nombre'] for item in get_selectable_items(bottoms)],
+        )
+
+    def close_application_after_crazy_rejection():
+        messagebox.showwarning(
+            'Crazy Mode Warning',
+            "That was a mistake. Pressing 'No' was the wrong choice.\n\n"
+            'The application will now close completely.',
+        )
+        root.destroy()
+
+    def get_active_price_multiplier_pct() -> float:
+        try:
+            raw_value = float(price_multiplier_var.get().replace(',', '.'))
+        except ValueError:
+            raw_value = 100.0
+        if not price_multiplier_enabled_var.get():
+            return 100.0
+        return max(0.0, raw_value)
+
     def open_advanced_options():
-        AdvancedOptionsWindow(root, tops, bottoms, top_var, bottom_var, top_combo, bottom_combo)
-
-    advanced_btn = tk.Button(root, text='⚙️', font=('Segoe UI', 14),
-                            command=open_advanced_options, bg=root_bg,
-                            fg=THEMES['light']['text_secondary'],
-                            relief=tk.FLAT, bd=0, highlightthickness=0,
-                            activebackground=THEMES['light']['frame'],
-                            activeforeground=THEMES['light']['label'],
-                            cursor='hand2')
-    advanced_btn.pack(side=tk.BOTTOM, anchor=tk.SW, padx=10, pady=5)
+        AdvancedOptionsWindow(
+            root,
+            tops,
+            bottoms,
+            top_var,
+            bottom_var,
+            top_combo,
+            bottom_combo,
+            show_prices_var,
+            update_display,
+            price_multiplier_var,
+            price_multiplier_enabled_var,
+            get_main_item_names,
+            outfit_preset_var,
+            request_outfit_preset_change,
+        )
 
     # Right frame for price bar (vertical progress bar)
-    bar_frame = tk.Frame(main_container, bg=root_bg, width=60)
+    bar_frame = tk.Frame(main_container, bg=root_bg, width=68)
     bar_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
     bar_frame.pack_propagate(False)
 
@@ -1540,7 +1850,7 @@ def main():
     bar_max_label.pack(side=tk.TOP, pady=2)
 
     # Vertical progress bar for price visualization (100-1500 scale with logarithmic)
-    price_bar = ttk.Progressbar(bar_frame, orient=tk.VERTICAL, length=300,
+    price_bar = ttk.Progressbar(bar_frame, orient=tk.VERTICAL, length=360,
                                 mode='determinate', maximum=100, value=0,
                                 style='Green.Vertical.TProgressbar')
     price_bar.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -1550,56 +1860,257 @@ def main():
                              bg=root_bg, fg='#888888')
     bar_min_label.pack(side=tk.BOTTOM, pady=2)
 
-    sel_frame = tk.LabelFrame(frm, bg=THEMES['light']['bg'],
-                              text='top / bottom selection',
-                              font=FONT_LABEL, padx=8, pady=8, fg='#333333',
-                              relief=tk.FLAT, borderwidth=2)
-    sel_frame.grid(row=2, column=0, sticky=tk.W)
+    hero_frame = tk.Frame(frm, padx=10, pady=10, height=HERO_PANEL_HEIGHT)
+    hero_frame.grid(row=0, column=0, sticky=tk.EW, pady=(2, 3))
+    hero_frame.grid_columnconfigure(0, weight=1)
+    hero_frame.grid_propagate(False)
 
-    tk.Label(sel_frame, text='Top item:', font=FONT_LABEL,
-             bg=THEMES['light']['bg'], fg='#333333').grid(row=0,
-                                                          column=0,
-                                                          sticky=tk.W,
-                                                          padx=(0,8))
-    top_names = [t['nombre'] for t in filter_items_by_permissions(tops)]
+    hero_content = tk.Frame(hero_frame)
+    hero_content.grid(row=0, column=0, sticky=tk.EW)
+
+    hero_title = tk.Label(hero_content, text='Outfit Price Dashboard',
+                          font=('Segoe UI Semibold', 16, 'bold'), anchor='w')
+    hero_title.pack(anchor=tk.W)
+
+    hero_subtitle = tk.Label(
+        hero_content,
+        text=('Select a combination and check the price,'
+              ' the rating, and the maximum potential at a glance.'),
+        font=('Segoe UI', 10),
+        anchor='w',
+        justify=tk.LEFT,
+    )
+    hero_subtitle.pack(anchor=tk.W, pady=(6, 0))
+
+    hero_actions = tk.Frame(hero_frame, bg=light_theme['accent'])
+    hero_actions.grid(row=0, column=1, sticky=tk.NE, padx=(16, 0))
+
+    actions_row = tk.Frame(hero_actions, bg=light_theme['accent'])
+    actions_row.pack(anchor=tk.E)
+
+    theme_btn = ttk.Button(hero_actions, text='☀️', command=toggle_theme,
+                           style='HeroIcon.TButton')
+    theme_btn.pack(in_=actions_row, side=tk.LEFT, padx=(0, 8))
+
+    theme_chip = tk.Label(
+        hero_actions,
+        textvariable=theme_state_var,
+        font=('Segoe UI', 9, 'bold'),
+        padx=12,
+        pady=6,
+    )
+    theme_chip.pack(anchor=tk.E, pady=(10, 0))
+
+    advanced_btn = ttk.Button(footer_frame, text='⚙️ Options',
+                              command=open_advanced_options, style='Secondary.TButton')
+    advanced_btn.pack(side=tk.RIGHT)
+
+    dashboard_cards = []
+
+    def create_dashboard_card(parent, title, value_var, accent_color, width=None, height=None):
+        if width is not None and height is not None:
+            card_frame = tk.Frame(parent, padx=12, pady=5, width=width, height=height)
+        elif width is not None:
+            card_frame = tk.Frame(parent, padx=12, pady=5, width=width)
+        elif height is not None:
+            card_frame = tk.Frame(parent, padx=12, pady=5, height=height)
+        else:
+            card_frame = tk.Frame(parent, padx=12, pady=5)
+        card_frame.pack_propagate(False)
+        accent = tk.Frame(card_frame, bg=accent_color, width=8)
+        accent.pack(side=tk.LEFT, fill=tk.Y)
+
+        content = tk.Frame(card_frame)
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0))
+
+        title_label = tk.Label(content, text=title, font=('Segoe UI', 9, 'bold'), anchor='w')
+        title_label.pack(anchor=tk.W)
+
+        value_label = tk.Label(content, textvariable=value_var,
+                               font=('Segoe UI', 12, 'bold'), anchor='w')
+        value_label.pack(anchor=tk.W, pady=(4, 0))
+
+        dashboard_cards.append({
+            'frame': card_frame,
+            'content': content,
+            'title': title_label,
+            'value': value_label,
+        })
+        return card_frame, value_label
+
+    sel_frame = ttk.LabelFrame(
+        frm,
+        text='Build your outfit',
+        padding=12,
+        style='Panel.TLabelframe',
+        height=SELECTOR_PANEL_HEIGHT,
+    )
+    sel_frame.grid(row=1, column=0, sticky=tk.EW)
+    sel_frame.grid_columnconfigure(1, weight=1)
+    sel_frame.grid_columnconfigure(2, weight=1)
+    sel_frame.grid_columnconfigure(1, weight=1)
+    sel_frame.grid_propagate(False)
+
+    preset_button_frame = tk.Frame(sel_frame, bg=THEMES['light']['frame'])
+    preset_button_frame.grid(row=0, column=0, columnspan=4, sticky=tk.EW, padx=4, pady=(0, 6))
+
+    top_selector_label = tk.Label(sel_frame, text='Top item:', font=FONT_LABEL,
+                                  bg=THEMES['light']['frame'], fg='#333333')
+    top_selector_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
+    top_names, bottom_names = get_main_item_names()
     top_var = tk.StringVar(value=top_names[0] if top_names else '')
     top_combo = ttk.Combobox(sel_frame, textvariable=top_var,
                              values=top_names, state='readonly', width=22,
                              style='Light.TCombobox')
-    top_combo.grid(row=0, column=1, sticky=tk.W, padx=4, pady=6)
+    top_combo.grid(row=1, column=1, sticky=tk.EW, padx=4, pady=6)
 
-    tk.Label(sel_frame, text='Bottom item:', font=FONT_LABEL,
-             bg=THEMES['light']['bg'], fg='#333333').grid(row=1,
-                                                          column=0, sticky=tk.W,
-                                                          padx=(0,8))
-    bottom_names = [b['nombre'] for b in filter_items_by_permissions(bottoms)]
+    bottom_selector_label = tk.Label(sel_frame, text='Bottom item:', font=FONT_LABEL,
+                                     bg=THEMES['light']['frame'], fg='#333333')
+    bottom_selector_label.grid(row=2, column=0, sticky=tk.W, padx=(0, 8))
     bottom_var = tk.StringVar(value=bottom_names[0] if bottom_names else '')
     bottom_combo = ttk.Combobox(sel_frame, textvariable=bottom_var,
                                 values=bottom_names, state='readonly', width=22,
                                 style='Light.TCombobox')
-    bottom_combo.grid(row=1, column=1, sticky=tk.W, padx=4, pady=6)
+    bottom_combo.grid(row=2, column=1, sticky=tk.EW, padx=4, pady=6)
+    for column_index in range(5):
+        preset_button_frame.grid_columnconfigure(column_index, weight=1)
+
+    def refresh_main_selector_options():
+        available_top_names, available_bottom_names = get_main_item_names()
+        current_top = top_var.get()
+        current_bottom = bottom_var.get()
+
+        top_combo['values'] = available_top_names
+        bottom_combo['values'] = available_bottom_names
+
+        if current_top not in available_top_names:
+            top_var.set(available_top_names[0] if available_top_names else '')
+        if current_bottom not in available_bottom_names:
+            bottom_var.set(available_bottom_names[0] if available_bottom_names else '')
+
+        random_state = tk.NORMAL if available_top_names and available_bottom_names else tk.DISABLED
+        btn.config(state=random_state)
+
+    preset_style_map = {
+        'dance': {'bg': '#C7DDE8', 'fg': '#244051'},
+        'sexy_dance': {'bg': '#E8C7D7', 'fg': '#51243C'},
+        'yoga': {'bg': '#CFE8C7', 'fg': '#2D4F2B'},
+        'adv_yoga': {'bg': '#D8CCE8', 'fg': '#3C2952'},
+        'crazy': {'bg': '#F0C98D', 'fg': '#5A3210'},
+    }
+    preset_buttons = {}
+
+    def refresh_preset_buttons(theme_colors=None):
+        colors = theme_colors or THEMES[current_theme['theme']]
+        selected_preset = outfit_preset_var.get()
+        for preset_key, button in preset_buttons.items():
+            preset_colors = preset_style_map[preset_key]
+            is_selected = preset_key == selected_preset
+            button.config(
+                bg=preset_colors['bg'] if is_selected else colors['frame_elevated'],
+                fg=preset_colors['fg'] if is_selected else colors['text'],
+                activebackground=preset_colors['bg'],
+                activeforeground=preset_colors['fg'],
+                highlightbackground=colors['border'],
+                highlightcolor=preset_colors['bg'],
+                highlightthickness=2 if is_selected else 1,
+                relief=tk.SUNKEN if is_selected else tk.FLAT,
+            )
+
+    def apply_outfit_preset(preset_key=None):
+        if preset_key is None:
+            preset_key = outfit_preset_var.get()
+        else:
+            outfit_preset_var.set(preset_key)
+        preset_multiplier = preset_multiplier_map.get(preset_key, 100)
+        price_multiplier_var.set(str(preset_multiplier))
+        price_multiplier_enabled_var.set(True)
+        applied_preset_state['value'] = preset_key
+        refresh_main_selector_options()
+        refresh_preset_buttons()
+        update_display()
+
+    def request_outfit_preset_change(requested_preset: str):
+        current_preset = applied_preset_state['value']
+        if requested_preset == current_preset:
+            refresh_preset_buttons()
+            return
+
+        if requested_preset == 'crazy':
+            confirmed = messagebox.askyesno(
+                'Enable Crazy Mode',
+                'Are you sure you want to activate Crazy Mode?\n\n'
+                'This mode is only intended for open-minded people.',
+            )
+            if confirmed:
+                apply_outfit_preset('crazy')
+                return
+            close_application_after_crazy_rejection()
+            return
+
+        apply_outfit_preset(requested_preset)
+
+    preset_options = [
+        ('Dance', 'dance'),
+        ('Sexy Dance', 'sexy_dance'),
+        ('Yoga', 'yoga'),
+        ('Adv Yoga', 'adv_yoga'),
+        ('Crazy', 'crazy'),
+    ]
+    preset_tooltip_map = {
+        'dance': 'Prices for regular dance.',
+        'sexy_dance': 'Prices for explicit dances where body is more exposed like anime dance.',
+        'yoga': 'Prices for easy yoga poses.',
+        'adv_yoga': 'Prices for advances poses where body can be exposed.',
+        'crazy': 'Prices for special actions for open minded.',
+    }
+
+    for index, (label, value) in enumerate(preset_options):
+        preset_button = tk.Button(
+            preset_button_frame,
+            text=label,
+            font=('Segoe UI', 8, 'bold'),
+            padx=10,
+            pady=6,
+            bd=0,
+            cursor='hand2',
+            command=lambda preset_value=value: request_outfit_preset_change(preset_value),
+        )
+        preset_button.grid(row=0, column=index, sticky=tk.EW, padx=4, pady=2)
+        preset_buttons[value] = preset_button
+        ToolTip(preset_button, preset_tooltip_map[value])
     # fonts for info and duplicate labels
     info_font = tkfont.Font(family=FONT_INFO[0], size=FONT_INFO[1], weight=FONT_INFO[2])
     dup_font = tkfont.Font(family=FONT_DUP[0], size=FONT_DUP[1])
 
     # create a small frame to hold the top info label and its tipo-2 duplicate label
-    top_info_frame = tk.Frame(sel_frame, bg=root_bg )
-    top_info_frame.grid(row=0, column=2, sticky=tk.W, padx=(12,0))
-    top_info_label = tk.Label(top_info_frame, text='', font=info_font, bg=root_bg, justify=tk.LEFT)
+    top_info_frame = tk.Frame(sel_frame, bg=THEMES['light']['frame'])
+    top_info_frame.grid(row=1, column=2, sticky=tk.EW, padx=(12,0))
+    top_price_badge = tk.Label(top_info_frame, text='●', font=('Segoe UI', 10),
+                               fg=COLOR_TOTAL_LOW, bg=THEMES['light']['frame'])
+    top_price_badge.pack(side=tk.LEFT, padx=(0, 4))
+    top_info_label = tk.Label(top_info_frame, text='', font=info_font,
+                              bg=THEMES['light']['frame'], justify=tk.LEFT)
     top_info_label.pack(side=tk.LEFT)
 
     # labels to the right that display names of tipo-2 (both) items
     top_dup_label = tk.Label(top_info_frame, text='', font=dup_font,
-                             fg=COLOR_DUP_TEXT, bg=root_bg, justify=tk.LEFT)
+                             fg=COLOR_DUP_TEXT, bg=THEMES['light']['frame'],
+                             justify=tk.LEFT)
     top_dup_label.pack(side=tk.LEFT, padx=(8,0))
 
-    bottom_info_frame = tk.Frame(sel_frame, bg=root_bg)
-    bottom_info_frame.grid(row=1, column=2, sticky=tk.W, padx=(12,0))
+    bottom_info_frame = tk.Frame(sel_frame, bg=THEMES['light']['frame'])
+    bottom_info_frame.grid(row=2, column=2, sticky=tk.EW, padx=(12,0))
+    bottom_price_badge = tk.Label(bottom_info_frame, text='●', font=('Segoe UI', 10),
+                                  fg=COLOR_TOTAL_LOW, bg=THEMES['light']['frame'])
+    bottom_price_badge.pack(side=tk.LEFT, padx=(0, 4))
     bottom_info_label = tk.Label(bottom_info_frame, text='',
-                                 font=info_font, bg=root_bg, justify=tk.LEFT)
+                                 font=info_font, bg=THEMES['light']['frame'],
+                                 justify=tk.LEFT)
     bottom_info_label.pack(side=tk.LEFT)
     bottom_dup_label = tk.Label(bottom_info_frame, text='',
-                                font=dup_font, fg=COLOR_DUP_TEXT, bg=root_bg, justify=tk.LEFT)
+                                font=dup_font, fg=COLOR_DUP_TEXT,
+                                bg=THEMES['light']['frame'], justify=tk.LEFT)
     bottom_dup_label.pack(side=tk.LEFT, padx=(8,0))
 
     # Horizontal separator line after selectors
@@ -1607,335 +2118,540 @@ def main():
     #separator2.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
     #separator2.grid_propagate(False)
 
-    # Button at right of selectors
-    random_selected = False  # Flag para saber si se seleccionó random
-
     def show_selection():
-        nonlocal random_selected
-        # Select random items from both top and bottom (filtered by permissions)
-        filtered_tops = filter_items_by_permissions(tops)
-        filtered_bottoms = filter_items_by_permissions(bottoms)
+        # Build weighted top-bottom pairs so incompatible combinations stay possible
+        # but appear half as often as the rest.
+        filtered_tops = get_selectable_items(tops)
+        filtered_bottoms = get_selectable_items(bottoms)
         if filtered_tops and filtered_bottoms:
-            random_top = random.choice(filtered_tops)
-            random_bottom = random.choice(filtered_bottoms)
+            current_ratings = load_ratings()
+            combinations = []
+            weights = []
+
+            for top_item in filtered_tops:
+                for bottom_item in filtered_bottoms:
+                    combinations.append((top_item, bottom_item))
+                    rating = get_combination_rating(
+                        current_ratings,
+                        top_item['nombre'],
+                        bottom_item['nombre'],
+                    )
+                    weights.append(0.5 if rating == 'incompatible' else 1.0)
+
+            random_top, random_bottom = random.choices(combinations, weights=weights, k=1)[0]
             top_var.set(random_top['nombre'])
             bottom_var.set(random_bottom['nombre'])
             update_display()
-            # Deshabilitar botón de opciones avanzadas y marcar como seleccionado por random
-            advanced_btn.config(state=tk.DISABLED)
-            random_selected = True
 
-    # Función para re-habilitar el botón de opciones avanzadas
-    # cuando se cambia la selección manualmente
-    def on_selection_changed(*args):
-        # Solo re-habilitar si no fue seleccionado mediante random
-        if not random_selected:
-            advanced_btn.config(state=tk.NORMAL)
-
-    btn = tk.Button(sel_frame, text='Random\nOutfit', command=show_selection,
-                   bg='#E8B4D4', fg="#312929", font=('Segoe UI', 10, 'bold'),
-                   relief=tk.SOLID, bd=2, activebackground='#D99DB8',
-                   activeforeground='#333333', cursor='hand2', padx=12, pady=10,
-                   highlightthickness=0, overrelief=tk.SOLID)
-    btn.grid(row=0, column=3, rowspan=2, sticky=tk.NS, padx=(12, 0), pady=6)
+    btn = ttk.Button(sel_frame, text='Random \nOutfit', command=show_selection,
+                     style='Random.TButton')
+    btn.grid(row=1, column=4, rowspan=2, sticky=tk.EW, padx=(12, 0), pady=5)
     # Checkbox to show/hide prices will be created after update_display() is defined
     show_prices_var = tk.BooleanVar(value=False)
 
     # prominent total area at the top, centered
-    total_frame = tk.Frame(frm, bg=root_bg)
-    total_frame.grid(row=0, column=0, columnspan=2, pady=(4,12))
+    total_frame = tk.Frame(
+        frm,
+        bg=THEMES['light']['frame'],
+        padx=18,
+        pady=18,
+        height=TOTAL_PANEL_HEIGHT,
+    )
+    total_frame.grid(row=2, column=0, sticky=tk.EW, pady=(6, 6))
+    total_frame.grid_propagate(False)
 
     big_font = tkfont.Font(family=FONT_TOTAL[0], size=FONT_TOTAL[1], weight=FONT_TOTAL[2])
 
-    # Frame para el precio y la calificación lado a lado
-    price_rating_frame = tk.Frame(total_frame, bg=root_bg)
-    price_rating_frame.pack(pady=(4,0))
+    total_caption_frame = tk.Frame(total_frame, bg=THEMES['light']['frame'])
+    total_caption_frame.pack(fill=tk.X)
+
+    total_caption_label = tk.Label(total_caption_frame, text='Current combination',
+                                   font=('Segoe UI', 10, 'bold'),
+                                   bg=THEMES['light']['frame'], fg='#666666')
+    total_caption_label.pack(side=tk.LEFT, anchor=tk.W)
+
+    multiplier_hint_label = tk.Label(
+        total_caption_frame,
+        textvariable=dashboard_multiplier_var,
+        font=('Segoe UI', 9),
+        bg=THEMES['light']['frame'],
+        fg='#666666',
+    )
+    multiplier_hint_label.pack(side=tk.RIGHT, anchor=tk.E)
+
+    total_header_frame = tk.Frame(total_frame, bg=THEMES['light']['frame'])
+    total_header_frame.pack(fill=tk.X, pady=(2, 0))
+
+    # Frame for the price and rating side by side
+    price_rating_frame = tk.Frame(total_header_frame, bg=THEMES['light']['frame'])
+    price_rating_frame.pack(side=tk.LEFT, anchor=tk.W)
 
     price_display = tk.Label(price_rating_frame, text='0', font=big_font,
-                             fg=COLOR_TOTAL_LOW, bg=root_bg, bd=0)
+                         fg=COLOR_TOTAL_LOW, bg=THEMES['light']['frame'], bd=0)
     price_display.pack(side=tk.LEFT, padx=(0, 20))
 
     # Rating label grande al lado del precio
-    rating_font = tkfont.Font(family='Segoe UI', size=20, weight='bold')
+    rating_font = tkfont.Font(family='Segoe UI', size=16, weight='bold')
     combination_rating_label = tk.Label(price_rating_frame, text='', font=rating_font,
-                                        bg=root_bg, fg='#4A9EFF')
+                                bg=THEMES['light']['frame'], fg='#4A9EFF')
     combination_rating_label.pack(side=tk.LEFT, padx=(10, 0))
 
+    metric_cards_frame = tk.Frame(total_header_frame, bg=THEMES['light']['frame'])
+    metric_cards_frame.pack(side=tk.RIGHT, anchor=tk.NE, padx=(8, 0))
+
+    total_card, dashboard_total_label = create_dashboard_card(
+        metric_cards_frame,
+        'current',
+        dashboard_total_var,
+        '#F59E0B',
+        width=TOTAL_METRIC_CARD_WIDTH,
+        height=TOTAL_METRIC_CARD_HEIGHT,
+    )
+    total_card.pack(side=tk.LEFT)
+
+    max_card, _dashboard_max_label = create_dashboard_card(
+        metric_cards_frame,
+        'Maximum',
+        dashboard_max_var,
+        '#8B5CF6',
+        width=TOTAL_METRIC_CARD_WIDTH,
+        height=TOTAL_METRIC_CARD_HEIGHT,
+    )
+    max_card.pack(side=tk.LEFT, padx=(5, 0))
+
     # Frame to hold the item names with separator
-    names_topframe = tk.LabelFrame(total_frame, bg=THEMES['light']['bg'], text='Top',
-                                font=FONT_LABEL, padx=8, pady=8, fg='#333333',
-                                relief=tk.FLAT, borderwidth=1, width=350, height=84)
-    names_topframe.pack(pady=(6,0))
+    names_topframe = ttk.LabelFrame(total_frame, text='Top', padding=10,
+                                                style='Panel.TLabelframe',
+                                                width=340,
+                                                height=ITEM_NAMES_PANEL_HEIGHT)
+    names_topframe.pack(fill=tk.X, pady=(6, 0))
     names_topframe.pack_propagate(False)  # No cambiar tamaño según contenido
 
-    names_bottomframe = tk.LabelFrame(total_frame, bg=THEMES['light']['bg'],
-                                      text='Bottom',
-                                font=FONT_LABEL, padx=8, pady=8, fg='#333333',
-                                relief=tk.FLAT, borderwidth=1, width=350, height=84)
-    names_bottomframe.pack(pady=(6,0))
+    names_bottomframe = ttk.LabelFrame(total_frame, text='Bottom', padding=10,
+                                                    style='Panel.TLabelframe',
+                                                    width=340,
+                                                    height=ITEM_NAMES_PANEL_HEIGHT)
+    names_bottomframe.pack(fill=tk.X, pady=(6, 0))
     names_bottomframe.pack_propagate(False)  # No cambiar tamaño según contenido
 
     # labels under the total showing the selected top and bottom item names
-    top_name_label = tk.Label(names_topframe, text='', font=FONT_NAME, bg=THEMES['light']['bg'],
-                             wraplength=320, justify=tk.CENTER)
-    top_name_label.pack(fill=tk.BOTH, expand=True)
+    top_names_container = tk.Frame(names_topframe, bg=THEMES['light']['frame'])
+    top_names_container.pack(fill=tk.BOTH, expand=True)
+    top_names_container.grid_columnconfigure(0, weight=1)
+    top_names_container.grid_columnconfigure(1, weight=1)
+    top_name_primary_label = tk.Label(top_names_container, text='', font=FONT_NAME,
+                                      bg=THEMES['light']['frame'], wraplength=200,
+                                      justify=tk.CENTER, anchor='center')
+    top_name_primary_label.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 6))
+    top_name_secondary_label = tk.Label(top_names_container, text='', font=FONT_NAME,
+                                        bg=THEMES['light']['frame'], wraplength=200,
+                                        justify=tk.CENTER, anchor='center')
+    top_name_secondary_label.grid(row=0, column=1, sticky=tk.NSEW, padx=(6, 0))
 
-    bottom_name_label = tk.Label(names_bottomframe, text='', font=FONT_NAME,
-                                 bg=THEMES['light']['bg'], wraplength=320, justify=tk.CENTER)
-    bottom_name_label.pack(fill=tk.BOTH, expand=True)
+    bottom_names_container = tk.Frame(names_bottomframe, bg=THEMES['light']['frame'])
+    bottom_names_container.pack(fill=tk.BOTH, expand=True)
+    bottom_names_container.grid_columnconfigure(0, weight=1)
+    bottom_names_container.grid_columnconfigure(1, weight=1)
+    bottom_name_primary_label = tk.Label(bottom_names_container, text='', font=FONT_NAME,
+                                         bg=THEMES['light']['frame'], wraplength=200,
+                                         justify=tk.CENTER, anchor='center')
+    bottom_name_primary_label.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 6))
+    bottom_name_secondary_label = tk.Label(bottom_names_container, text='', font=FONT_NAME,
+                                           bg=THEMES['light']['frame'], wraplength=200,
+                                           justify=tk.CENTER, anchor='center')
+    bottom_name_secondary_label.grid(row=0, column=1, sticky=tk.NSEW, padx=(6, 0))
 
     # Horizontal separator line after total
     #separator1 = tk.Frame(frm, bg='#cccccc', height=1)
     #separator1.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
     #separator1.grid_propagate(False)
 
-    details_label = tk.Label(frm, text='', wraplength=380, bg=THEMES['light']['bg'],
-                             font=('Segoe UI', 9),
-                             fg='#666666')
-    details_label.grid(row=4, column=0, sticky=tk.W, pady=(6,0))
+    insights_frame = tk.Frame(frm, bg=root_bg)
+    insights_frame.grid(row=3, column=0, sticky=tk.EW)
+
+    insights_panel = tk.Frame(
+        insights_frame,
+        bg=THEMES['light']['frame'],
+        padx=10,
+        pady=6,
+        height=QUICK_NOTES_HEIGHT,
+    )
+    insights_panel.pack(fill=tk.X)
+    insights_panel.pack_propagate(False)
+
+    insights_title = tk.Label(insights_panel, text=' ', font=('Segoe UI', 2, 'bold'),
+                              bg=THEMES['light']['frame'], fg='#333333')
+    insights_title.pack(anchor=tk.W)
+
+    details_label = tk.Label(insights_panel, text='', wraplength=680,
+                             bg=THEMES['light']['frame'], font=('Segoe UI', 8),
+                             fg='#666666', justify=tk.LEFT, anchor='w')
+    details_label.pack(fill=tk.X, pady=(2, 0))
+
+    quick_actions_frame = tk.Frame(insights_panel, bg=THEMES['light']['frame'])
+    quick_actions_frame.pack(fill=tk.X, pady=(2, 0))
 
     # Label to show maximum possible price
-    bold_font = tkfont.Font(family='Segoe UI', size=9, weight='bold')
-    max_price_label = tk.Label(frm, text='', bg=THEMES['light']['bg'], font=bold_font, fg='#333333')
-    max_price_label.grid(row=5, column=0, sticky=tk.W, pady=(4,0))
+    bold_font = tkfont.Font(family='Segoe UI', size=8, weight='bold')
+    max_price_label = tk.Label(insights_panel, text='', bg=THEMES['light']['frame'],
+                               font=bold_font, fg='#333333', justify=tk.LEFT, anchor='w')
+    max_price_label.pack(fill=tk.X, pady=(2, 0))
 
-
-    def build_lookup(collection):
-        """Build a dictionary for O(1) item lookup by nombre."""
-        return {item['nombre']: item for item in collection}
 
     tops_dict = build_lookup(tops)
     bottoms_dict = build_lookup(bottoms)
 
     # Cargar calificaciones de combinaciones
     ratings_data = load_ratings()
+    quick_top_discard_primary_var = tk.BooleanVar(value=False)
+    quick_top_discard_secondary_var = tk.BooleanVar(value=False)
+    quick_bottom_discard_primary_var = tk.BooleanVar(value=False)
+    quick_bottom_discard_secondary_var = tk.BooleanVar(value=False)
+    quick_option_state = {
+        'top': {'key': ('', ''), 'primary': '', 'secondary': ''},
+        'bottom': {'key': ('', ''), 'primary': '', 'secondary': ''},
+    }
 
-    def price_to_logarithmic_scale(price, min_price=50, max_price=1500):
-        """Convierte un precio a escala logarítmica (50-1500)."""
-        if price < min_price:
-            return 0
-        if price >= max_price:
-            return 100
-        # Usar logaritmo natural para suavizar la escala en el rango 50-1500
-        # Fórmula: log(precio - min + 1) / log(max - min + 1) * 100
-        log_value = math.log(price - min_price + 1) / math.log(max_price - min_price + 1) * 100
-        return min(log_value, 100)
-
-    def color_for_total(total):
-        if total <= THRESH_MID:
-            return COLOR_TOTAL_LOW
-        if total <= THRESH_HIGH:
-            return COLOR_TOTAL_MID
-        return COLOR_TOTAL_HIGH
-
-    def hex_to_rgb(hex_color):
-        """Convierte color hexadecimal a tuple RGB."""
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-    def rgb_to_hex(r, g, b):
-        """Convierte RGB a hexadecimal."""
-        return f'#{r:02x}{g:02x}{b:02x}'
-
-    def interpolate_color(color1, color2, factor):
-        """Interpola entre dos colores RGB."""
-        r1, g1, b1 = hex_to_rgb(color1)
-        r2, g2, b2 = hex_to_rgb(color2)
-        r = int(r1 + (r2 - r1) * factor)
-        g = int(g1 + (g2 - g1) * factor)
-        b = int(b1 + (b2 - b1) * factor)
-        return rgb_to_hex(r, g, b)
-
-    def get_bar_color(price, min_price=50, mid_price=275, max_price=1500):
-        """Retorna color de gradiente según el precio."""
-        if price <= min_price:
-            return COLOR_TOTAL_LOW  # Verde
-        elif price <= mid_price:
-            # Interpolación verde a naranja
-            factor = (price - min_price) / (mid_price - min_price)
-            return interpolate_color(COLOR_TOTAL_LOW, COLOR_TOTAL_MID, factor)
-        elif price <= max_price:
-            # Interpolación naranja a rojo
-            factor = (price - mid_price) / (max_price - mid_price)
-            return interpolate_color(COLOR_TOTAL_MID, COLOR_TOTAL_HIGH, factor)
+    def reset_quick_panel(panel_name):
+        if panel_name == 'top':
+            quick_top_discard_primary_var.set(False)
+            quick_top_discard_secondary_var.set(False)
         else:
-            return COLOR_TOTAL_HIGH  # Rojo
+            quick_bottom_discard_primary_var.set(False)
+            quick_bottom_discard_secondary_var.set(False)
+
+    def handle_quick_discard(panel_name, discard_target):
+        panel_state = quick_option_state[panel_name]
+        if panel_name == 'top':
+            primary_var = quick_top_discard_primary_var
+            secondary_var = quick_top_discard_secondary_var
+            selector_var = top_var
+        else:
+            primary_var = quick_bottom_discard_primary_var
+            secondary_var = quick_bottom_discard_secondary_var
+            selector_var = bottom_var
+
+        if discard_target == 'primary':
+            if primary_var.get():
+                secondary_var.set(False)
+                primary_var.set(False)
+                if panel_state['secondary']:
+                    selector_var.set(panel_state['secondary'])
+                update_display()
+            return
+
+        if secondary_var.get():
+            primary_var.set(False)
+        update_display()
 
 
     def update_display(_event=None):
+        def update_name_labels(primary_label, secondary_label, entries):
+            default_color = THEMES[current_theme['theme']]['text']
+            highlight_colors = [default_color] * len(entries)
+            single_wraplength = 420
+            dual_wraplength = 250
+
+            if len(entries) == 2:
+                first_price = entries[0][1]
+                second_price = entries[1][1]
+                if (first_price is not None and second_price is not None and
+                    first_price != second_price):
+                    if first_price > second_price:
+                        highlight_colors = [COLOR_TOTAL_LOW, COLOR_TOTAL_HIGH]
+                    else:
+                        highlight_colors = [COLOR_TOTAL_HIGH, COLOR_TOTAL_LOW]
+
+            primary_label.config(text=entries[0][0] if entries else '',
+                                 wraplength=dual_wraplength if len(
+                                     entries) > 1 else single_wraplength,
+                                 fg=highlight_colors[0] if entries else default_color)
+
+            if len(entries) > 1:
+                primary_label.grid_configure(column=0, columnspan=1)
+                secondary_label.grid()
+                secondary_label.config(
+                    text=entries[1][0],
+                    wraplength=dual_wraplength,
+                    fg=highlight_colors[1],
+                )
+            else:
+                primary_label.grid_configure(column=0, columnspan=2)
+                secondary_label.grid_remove()
+                secondary_label.config(text='', wraplength=dual_wraplength, fg=default_color)
+
         top_sel = top_var.get()
         bot_sel = bottom_var.get()
         top_item = tops_dict.get(top_sel)
         bot_item = bottoms_dict.get(bot_sel)
+        multiplier_factor = get_active_price_multiplier_pct() / 100.0
 
-        total = 0
-        parts = []
-
-        # Update labels and calculate total with minimum pricing for tipo-2 items
-        original_top_price = 0
-        original_bot_price = 0
-        top_price = 0
         if top_item:
-            original_top_price = top_item['precio']
-            top_price = original_top_price
-            parts.append(
-                f"Top: {top_item['nombre']} ({top_item['categoria']}) - {top_item['precio']}")
-            top_info_label.config(text=f"{top_item['precio']}" if show_prices_var.get() else '')
+            top_info_label.config(
+                text=f"{top_item['precio'] * multiplier_factor:.0f}" if show_prices_var.get(
+                    ) else ''
+            )
+            top_price_badge.config(fg=color_for_total(top_item['precio'] * multiplier_factor))
         else:
             top_info_label.config(text='')
+            top_price_badge.config(fg=THEMES[current_theme['theme']]['text_secondary'])
 
-        bot_price = 0
         if bot_item:
-            original_bot_price = bot_item['precio']
-            bot_price = original_bot_price
-            parts.append(
-                f"Bottom: {bot_item['nombre']} ({bot_item['categoria']}) - {bot_item['precio']}")
-            bottom_info_label.config(text=f"{bot_item['precio']}" if show_prices_var.get() else '')
+            bottom_info_label.config(
+                text=f"{bot_item['precio'] * multiplier_factor:.0f}" if show_prices_var.get(
+                    ) else ''
+            )
+            bottom_price_badge.config(fg=color_for_total(bot_item['precio'] * multiplier_factor))
         else:
             bottom_info_label.config(text='')
+            bottom_price_badge.config(fg=THEMES[current_theme['theme']]['text_secondary'])
 
-        # Apply minimum pricing for tipo-2 items
-        if top_item and top_item.get('tipo') == 2:
-            # TOP is tipo 2: consider its price in BOTTOM CSV
-            bottom_version = bottoms_dict.get(top_item['nombre'])
-            if bottom_version and bot_item:
-                # Choose minimum between bottom_version and selected bottom item
-                bot_price = min(bot_price, bottom_version['precio'])
-
-        if bot_item and bot_item.get('tipo') == 2:
-            # BOTTOM is tipo 2: consider its price in TOP CSV
+        top_extra_name = ''
+        top_extra_price = None
+        if bot_item and bot_item.get('tipo') == 2 and bot_item['nombre'] != (
+            top_item['nombre'] if top_item else ''):
             top_version = tops_dict.get(bot_item['nombre'])
-            if top_version and top_item:
-                # Choose minimum between top_version and selected top item
-                top_price = min(top_price, top_version['precio'])
+            top_extra_name = bot_item['nombre']
+            top_extra_price = top_version['precio'] if top_version else None
 
-        total = top_price + bot_price
-        # Display tipo-2 (duplicate) items: show their prices in the corresponding position
-        if top_item and top_item.get('tipo') == 2 and bot_item and bot_item.get('tipo') == 2:
-            # Both are tipo 2 and different: show each other's prices cross-referenced
-            if top_item['nombre'] != bot_item['nombre']:
-                # Show BOTTOM's tipo 2 price searched in TOP CSV
-                bot_in_top = tops_dict.get(bot_item['nombre'])
-                top_dup = f"{bot_in_top['precio']}" if bot_in_top else ''
-                # Show TOP's tipo 2 price searched in BOTTOM CSV
-                top_in_bot = bottoms_dict.get(top_item['nombre'])
-                bottom_dup = f"{top_in_bot['precio']}" if top_in_bot else ''
-            else:
-                # Same item selected in both (shouldn't show duplicates)
-                top_dup = ''
-                bottom_dup = ''
-        elif top_item and top_item.get('tipo') == 2:
-            # Only TOP is tipo 2: show its price in both positions
-            top_dup = f"{top_item['precio']}"
+        bottom_extra_name = ''
+        bottom_extra_price = None
+        if top_item and top_item.get('tipo') == 2 and top_item['nombre'] != (
+            bot_item['nombre'] if bot_item else ''):
             bottom_version = bottoms_dict.get(top_item['nombre'])
-            bottom_dup = f"{bottom_version['precio']}" if bottom_version else ''
-        elif bot_item and bot_item.get('tipo') == 2:
-            # Only BOTTOM is tipo 2: show its price in both positions
-            top_version = tops_dict.get(bot_item['nombre'])
-            top_dup = f"{top_version['precio']}" if top_version else ''
-            bottom_dup = f"{bot_item['precio']}"
+            bottom_extra_name = top_item['nombre']
+            bottom_extra_price = bottom_version['precio'] if bottom_version else None
+
+        top_context_key = (top_sel, top_extra_name)
+        if quick_option_state['top']['key'] != top_context_key:
+            quick_option_state['top'] = {
+                'key': top_context_key,
+                'primary': top_sel,
+                'secondary': top_extra_name,
+            }
+            reset_quick_panel('top')
         else:
-            # Neither is tipo 2
-            top_dup = ''
-            bottom_dup = ''
+            quick_option_state['top']['primary'] = top_sel
+            quick_option_state['top']['secondary'] = top_extra_name
 
-        top_dup_label.config(text=top_dup if show_prices_var.get() else '')
-        bottom_dup_label.config(text=bottom_dup if show_prices_var.get() else '')
+        bottom_context_key = (bot_sel, bottom_extra_name)
+        if quick_option_state['bottom']['key'] != bottom_context_key:
+            quick_option_state['bottom'] = {
+                'key': bottom_context_key,
+                'primary': bot_sel,
+                'secondary': bottom_extra_name,
+            }
+            reset_quick_panel('bottom')
+        else:
+            quick_option_state['bottom']['primary'] = bot_sel
+            quick_option_state['bottom']['secondary'] = bottom_extra_name
+
+        combo_details = calculate_combination_details(top_item, bot_item, tops_dict, bottoms_dict)
+        adjusted_details = dict(combo_details)
+
+        top_extra_active = bool(top_extra_name) and not quick_top_discard_secondary_var.get()
+        bottom_extra_active = bool(
+            bottom_extra_name) and not quick_bottom_discard_secondary_var.get()
+
+        adjusted_details['top_price'] = combo_details['original_top_price']
+        adjusted_details['bottom_price'] = combo_details['original_bottom_price']
+
+        if top_extra_active and top_extra_price is not None:
+            adjusted_details['top_price'] = min(adjusted_details['top_price'], top_extra_price)
+            adjusted_details['top_duplicate_price'] = top_extra_price
+        else:
+            adjusted_details['top_duplicate_price'] = ''
+
+        if bottom_extra_active and bottom_extra_price is not None:
+            adjusted_details['bottom_price'] = min(adjusted_details['bottom_price'],
+                                                   bottom_extra_price)
+            adjusted_details['bottom_duplicate_price'] = bottom_extra_price
+        else:
+            adjusted_details['bottom_duplicate_price'] = ''
+
+        max_possible_top = combo_details['original_top_price']
+        max_possible_bottom = combo_details['original_bottom_price']
+        if top_extra_active and top_extra_price is not None:
+            max_possible_top = max(max_possible_top, top_extra_price)
+        if bottom_extra_active and bottom_extra_price is not None:
+            max_possible_bottom = max(max_possible_bottom, bottom_extra_price)
+
+        adjusted_details['total'] = adjusted_details['top_price'] + adjusted_details['bottom_price']
+        adjusted_details['max_possible'] = max_possible_top + max_possible_bottom
+        adjusted_details['explanation'] = ''
+
+        if adjusted_details['max_possible'] > adjusted_details['total']:
+            if bottom_extra_active and top_item and bot_item and bottom_extra_price is not None:
+                adjusted_details['explanation'] = (
+                    f"{top_item['nombre']} could replace {bot_item['nombre']} for "
+                    f"{bottom_extra_price} instead of {combo_details['original_bottom_price']}."
+                )
+            elif top_extra_active and bot_item and top_item and top_extra_price is not None:
+                adjusted_details['explanation'] = (
+                    f"{bot_item['nombre']} could replace {top_item['nombre']} for "
+                    f"{top_extra_price} instead of {combo_details['original_top_price']}."
+                )
+
+        adjusted_details = apply_price_multiplier_to_details(
+            adjusted_details,
+            get_active_price_multiplier_pct(),
+        )
+
+        total = adjusted_details['total']
+        rounded_total = round_price_to_step(total)
+        rounded_max_possible = round_price_to_step(adjusted_details['max_possible'])
+        active_multiplier_pct = get_active_price_multiplier_pct()
+
+        top_dup_label.config(
+            text=str(adjusted_details['top_duplicate_price']) if show_prices_var.get() else ''
+        )
+        bottom_dup_label.config(
+            text=str(adjusted_details['bottom_duplicate_price']) if show_prices_var.get() else ''
+        )
+
+        dashboard_multiplier_var.set(
+            f"Factor {active_multiplier_pct:.0f}%"
+            if price_multiplier_enabled_var.get()
+            else ''
+        )
 
         # Update price display with appropriate color
-        price_display.config(text=str(int(total)), fg=color_for_total(total))
+        price_display.config(text=str(int(rounded_total)), fg=color_for_total(rounded_total))
+        dashboard_total_var.set(str(int(rounded_total)))
+        dashboard_total_label.config(fg=color_for_total(rounded_total))
 
         # Update price bar (0-1500 scale) with color gradient
-        price_bar['value'] = price_to_logarithmic_scale(total)  # Escala logarítmica
+        price_bar['value'] = price_to_logarithmic_scale(rounded_total)  # Escala logarítmica
         # Get the appropriate bar color based on price
-        bar_color = get_bar_color(total)
+        bar_color = get_bar_color(rounded_total)
         # Create or update style with the interpolated color
         style.configure('Dynamic.Vertical.TProgressbar', background=bar_color)
         price_bar.config(style='Dynamic.Vertical.TProgressbar')
 
         # Update item name labels below total
         # Tipo 2 items appear in both lines, but avoid duplicates if same item is selected
-        top_str = top_sel
-        bottom_str = bot_sel
+        # Build display for each panel.
+        top_primary_label_text = top_sel
+        if quick_bottom_discard_secondary_var.get():
+            top_primary_label_text = f'{top_sel} *top only'
 
-        # Build display for each label
-        # Top label: always shows TOP, plus BOTTOM if it's tipo 2 and different from TOP
-        display_top = top_str
-        if bot_item and bot_item.get(
-            'tipo') == 2 and bot_item['nombre'] != (top_item['nombre'] if top_item else ''):
-            display_top = f"{top_str}\n{bottom_str}"
+        bottom_primary_label_text = bot_sel
+        if quick_top_discard_secondary_var.get():
+            bottom_primary_label_text = f'{bot_sel} *bottom only'
 
-        # Bottom label: always shows BOTTOM, plus TOP if it's tipo 2 and different from BOTTOM
-        display_bottom = bottom_str
-        if top_item and top_item.get(
-            'tipo') == 2 and top_item['nombre'] != (bot_item['nombre'] if bot_item else ''):
-            display_bottom = f"{bottom_str}\n{top_str}"
+        display_top_entries = [
+            (top_primary_label_text,
+             top_item['precio'] * multiplier_factor if top_item else None)
+        ]
+        if top_extra_active:
+            scaled_top_extra_price = top_extra_price * multiplier_factor if (
+                top_extra_price is not None) else None
+            display_top_entries.append((bot_sel, scaled_top_extra_price))
 
-        top_name_label.config(text=display_top)
-        bottom_name_label.config(text=display_bottom)
+        display_bottom_entries = [
+            (bottom_primary_label_text,
+             bot_item['precio'] * multiplier_factor if bot_item else None)
+        ]
+        if bottom_extra_active:
+            scaled_bottom_extra_price = (
+                bottom_extra_price * multiplier_factor if bottom_extra_price is not None else None
+            )
+            display_bottom_entries.append((top_sel, scaled_bottom_extra_price))
+
+        update_name_labels(top_name_primary_label, top_name_secondary_label, display_top_entries)
+        update_name_labels(bottom_name_primary_label, bottom_name_secondary_label,
+                           display_bottom_entries)
 
         # Mostrar calificación de la combinación al lado del precio
-        combination_rating = get_combination_rating(ratings_data, top_str, bottom_str)
+        combination_rating = get_combination_rating(ratings_data, top_sel, bot_sel)
         rating_label_text, rating_color = RATING_LABELS[combination_rating]
         combination_rating_label.config(text=rating_label_text, fg=rating_color)
+        dashboard_rating_var.set(rating_label_text if rating_label_text else 'Sin calificar')
 
-        # Update details with explanation of price alternatives
-        # Calculate what the maximum could be considering tipo-2 alternatives
-        max_possible_top = original_top_price if top_item else 0
-        max_possible_bot = original_bot_price if bot_item else 0
+        if top_extra_name:
+            discard_top_primary_check.config(
+                text=f'Discard {top_sel}',
+                command=lambda: handle_quick_discard('top', 'primary'),
+            )
+            discard_top_primary_check.pack(anchor=tk.W, fill=tk.X)
+            discard_top_secondary_check.config(
+                text=(f'Discard {top_extra_name} from top, use only as'
+                      ' a bottom item like panties or skirt'),
+                command=lambda: handle_quick_discard('top', 'secondary'),
+            )
+            discard_top_secondary_check.pack(anchor=tk.W, fill=tk.X, pady=(4, 0))
+        else:
+            discard_top_primary_check.pack_forget()
+            discard_top_secondary_check.pack_forget()
 
-        # If top is tipo 2, check if it could be used for bottom at different price
-        if top_item and top_item.get('tipo') == 2:
-            bot_ver = bottoms_dict.get(top_item['nombre'])
-            if bot_ver:
-                max_possible_bot = max(max_possible_bot, bot_ver['precio'])
+        if bottom_extra_name:
+            discard_bottom_primary_check.config(
+                text=f'Discard {bot_sel}',
+                command=lambda: handle_quick_discard('bottom', 'primary'),
+            )
+            discard_bottom_primary_check.pack(anchor=tk.W, fill=tk.X, pady=(8, 0))
+            discard_bottom_secondary_check.config(
+                text=(f'Discard {bottom_extra_name} from bottom,'
+                      ' use only as a top item like bra or top'),
+                command=lambda: handle_quick_discard('bottom', 'secondary'),
+            )
+            discard_bottom_secondary_check.pack(anchor=tk.W, fill=tk.X, pady=(4, 0))
+        else:
+            discard_bottom_primary_check.pack_forget()
+            discard_bottom_secondary_check.pack_forget()
 
-        # If bottom is tipo 2, check if it could be used for top at different price
-        if bot_item and bot_item.get('tipo') == 2:
-            top_ver = tops_dict.get(bot_item['nombre'])
-            if top_ver:
-                max_possible_top = max(max_possible_top, top_ver['precio'])
+        if top_extra_name or bottom_extra_name:
+            details_label.config(
+                text=('By default both options stay active. Discard one of them'
+                      ' to keep the exact item assignment for better price optimization.'))
+        else:
+            details_label.config(text='No mirrored items available for this combination.')
 
-        max_possible = max_possible_top + max_possible_bot
-        explanation = ''
-
-        if max_possible > total:
-            # Check if top item could replace bottom (exists in bottom CSV)
-            if top_item and top_item.get('tipo') == 2:
-                bot_ver = bottoms_dict.get(top_item['nombre'])
-                if bot_ver and bot_item:
-                    explanation = (f"{top_item['nombre']} could replace {bot_item['nombre']} for"
-                                   f" {bot_ver['precio']} instead of {original_bot_price}.")
-
-            # Check if bottom item could replace top (exists in top CSV)
-            if not explanation and bot_item and bot_item.get('tipo') == 2:
-                top_ver = tops_dict.get(bot_item['nombre'])
-                if top_ver and top_item:
-                    explanation = (f"{bot_item['nombre']} could replace {top_item['nombre']} for"
-                                   f" {top_ver['precio']} instead of {original_top_price}.")
-
-        details_label.config(text=explanation if explanation else '')
+        dashboard_mode_var.set('Precios visibles' if show_prices_var.get() else 'Precios ocultos')
 
         # Show maximum possible price if it's higher than current total
-        if max_possible > total:
-            max_price_label.config(text=f"Maximum possible price: {int(max_possible)}")
+        if adjusted_details['max_possible'] > total:
+            max_price_label.config(
+                text=f"Maximum possible price: {int(rounded_max_possible)}")
+            dashboard_max_var.set(str(int(rounded_max_possible)))
         else:
             max_price_label.config(text='')
+            dashboard_max_var.set(str(int(rounded_total)))
 
-    # Create the checkbox AFTER update_display is defined
-    prices_checkbox = tk.Checkbutton(sel_frame, text='Prices', variable=show_prices_var,
-                                     bg=root_bg, font=('Segoe UI', 8),
-                                     command=update_display)
-    prices_checkbox.grid(row=0, column=4, rowspan=2, sticky=tk.NS, padx=(8, 0), pady=6)
+    discard_top_primary_check = ttk.Checkbutton(
+        quick_actions_frame,
+        text='',
+        variable=quick_top_discard_primary_var,
+        style='Subtle.TCheckbutton',
+    )
+
+    discard_top_secondary_check = ttk.Checkbutton(
+        quick_actions_frame,
+        text='',
+        variable=quick_top_discard_secondary_var,
+        style='Subtle.TCheckbutton',
+    )
+
+    discard_bottom_primary_check = ttk.Checkbutton(
+        quick_actions_frame,
+        text='',
+        variable=quick_bottom_discard_primary_var,
+        style='Subtle.TCheckbutton',
+    )
+
+    discard_bottom_secondary_check = ttk.Checkbutton(
+        quick_actions_frame,
+        text='',
+        variable=quick_bottom_discard_secondary_var,
+        style='Subtle.TCheckbutton',
+    )
 
     top_combo.bind('<<ComboboxSelected>>', update_display)
     bottom_combo.bind('<<ComboboxSelected>>', update_display)
 
-    # Vincular cambios en los comboboxes para re-habilitar el botón de opciones avanzadas
-    top_var.trace('w', on_selection_changed)
-    bottom_var.trace('w', on_selection_changed)
-
     # initial update
+    apply_outfit_preset()
+    apply_custom_theme()
     update_display()
 
     root.mainloop()
